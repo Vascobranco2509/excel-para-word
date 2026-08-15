@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -42,6 +43,9 @@ MAX_FATIAS_CIRCULAR = 12
 
 # rotulos que denunciam uma linha de totais deixada por um sistema de exportacao
 ROTULOS_DE_TOTAL = frozenset({"total", "totais", "total geral", "subtotal", "soma", "sum"})
+
+# simbolos a ignorar quando os numeros vem gravados como texto
+SIMBOLOS_MOEDA = ("€", "$", "£", "¥", "R$", "EUR", "USD")
 LARGURA_IMAGEM = Inches(6.0)
 
 # tamanhos pensados para a figura ja encolhida dentro da pagina do Word
@@ -112,6 +116,130 @@ def normalizar(texto) -> str:
     """Minusculas e sem acentos, para comparar rotulos."""
     sem_acentos = unicodedata.normalize("NFKD", str(texto))
     return "".join(c for c in sem_acentos if not unicodedata.combining(c)).strip().lower()
+
+
+def limpar_numero(texto) -> str:
+    """Tira simbolos de moeda e espacos, deixando so digitos e separadores."""
+    limpo = str(texto).strip()
+    for simbolo in SIMBOLOS_MOEDA:
+        limpo = limpo.replace(simbolo, "")
+    return limpo.replace(" ", "").replace(" ", "").strip()
+
+
+def classificar_formato(limpo: str) -> str | None:
+    """Diz que convencao de separadores um valor usa.
+
+    Devolve 'pt' (1.250,00), 'en' (1,250.00), 'simples' (sem separadores),
+    'ambiguo' (1.250 -- tanto pode ser mil duzentos e cinquenta como um
+    virgula vinte e cinco) ou None se nem sequer parece um numero.
+    """
+    if not re.fullmatch(r"-?\d[\d.,]*", limpo):
+        return None
+
+    virgulas = limpo.count(",")
+    pontos = limpo.count(".")
+
+    if virgulas and pontos:
+        # o ultimo separador a aparecer e o decimal
+        return "pt" if limpo.rindex(",") > limpo.rindex(".") else "en"
+    if virgulas:
+        if virgulas > 1:
+            return "en"  # 1,250,000 -- so pode ser separador de milhares
+        return "ambiguo" if len(limpo.split(",")[-1]) == 3 else "pt"
+    if pontos:
+        if pontos > 1:
+            return "pt"  # 1.250.000
+        return "ambiguo" if len(limpo.split(".")[-1]) == 3 else "en"
+    return "simples"
+
+
+def aplicar_formato(limpo: str, convencao: str) -> float | None:
+    if convencao == "pt":
+        limpo = limpo.replace(".", "").replace(",", ".")
+    elif convencao == "en":
+        limpo = limpo.replace(",", "")
+    try:
+        return float(limpo)
+    except ValueError:
+        return None
+
+
+def ler_coluna_bruta(excel: pd.ExcelFile, folha: str, nome: str,
+                     n_linhas: int) -> list | None:
+    """Devolve os valores da coluna tal como estao gravados na celula.
+
+    E preciso porque o pandas decide sozinho que o texto «1.250» vale 1,25.
+    Num Excel portugues isso quer dizer mil vezes menos, sem erro nenhum e
+    sem aviso nenhum. A celula em bruto ainda sabe que aquilo era texto.
+
+    Devolve None se nao conseguir alinhar com o que o pandas leu, para o
+    resto do programa seguir pelo caminho normal em vez de arriscar.
+    """
+    try:
+        folha_bruta = excel.book[folha]
+        cabecalhos = [c.value for c in next(folha_bruta.iter_rows(max_row=1))]
+        indice = cabecalhos.index(nome)
+    except (AttributeError, KeyError, StopIteration, ValueError):
+        return None
+
+    valores = [
+        linha[indice].value if indice < len(linha) else None
+        for linha in folha_bruta.iter_rows(min_row=2)
+    ]
+    # o pandas ignora linhas totalmente vazias no fim; so seguimos se bater certo
+    while valores and valores[-1] is None and len(valores) > n_linhas:
+        valores.pop()
+    return valores if len(valores) == n_linhas else None
+
+
+def converter_texto_formatado(coluna: pd.Series, onde: str,
+                              nome: str) -> tuple[pd.Series, bool]:
+    """Converte texto com separadores de milhares e moeda em numeros.
+
+    A convencao e deduzida dos valores inequivocos da propria coluna. Se um
+    «980,50 €» prova que a virgula e decimal, entao o «1.250» ao lado deixa
+    de ser ambiguo. Se nada a prova, para com erro em vez de adivinhar: um
+    palpite errado aqui nao da erro nenhum, da um relatorio mil vezes ao lado.
+    """
+    limpos = {}
+    formatos = {}
+    for indice, valor in coluna.items():
+        if pd.isna(valor):
+            continue
+        limpo = limpar_numero(valor)
+        limpos[indice] = limpo
+        formatos[indice] = classificar_formato(limpo)
+
+    convencoes = {f for f in formatos.values() if f in ("pt", "en")}
+    ambiguos = [limpos[i] for i, f in formatos.items() if f == "ambiguo"]
+
+    if len(convencoes) > 1:
+        raise ErroDados(
+            f"O {onde} usa «{nome}» como valor, mas a coluna mistura formatos de "
+            "número incompatíveis (uns à portuguesa, outros à inglesa). "
+            "Formata a coluna toda como número no Excel."
+        )
+    if ambiguos and not convencoes:
+        exemplos = list(dict.fromkeys(ambiguos))[:3]
+        raise ErroDados(
+            f"O {onde} usa «{nome}» como valor, mas os números estão guardados "
+            f"como texto num formato ambíguo: {listar(exemplos)}. «1.250» tanto "
+            "pode ser mil duzentos e cinquenta como um vírgula vinte e cinco, e "
+            "não vou adivinhar. Formata a coluna como número no Excel."
+        )
+
+    convencao = convencoes.pop() if convencoes else "simples"
+    houve_formatacao = bool(convencoes) or convencao != "simples"
+
+    valores = {}
+    for indice, limpo in limpos.items():
+        if formatos[indice] is None:
+            valores[indice] = None
+        else:
+            valores[indice] = aplicar_formato(limpo, convencao)
+
+    convertida = pd.Series(valores, dtype="float64").reindex(coluna.index)
+    return convertida, houve_formatacao
 
 
 def detetar_linha_de_total(serie: pd.Series, grafico: dict,
@@ -300,6 +428,7 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
                 f"O {onde} pede a coluna «{eixo_y}», que não existe na folha «{folha}». "
                 f"Colunas disponíveis: {listar(df.columns)}."
             )
+        df = proteger_de_texto_reinterpretado(df, excel, folha, eixo_y, onde, avisos)
         df = converter_para_numero(df, eixo_y, folha, onde, avisos)
         colunas_necessarias = [eixo_x, eixo_y]
     else:
@@ -354,6 +483,50 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
     return serie, len(df)
 
 
+def proteger_de_texto_reinterpretado(df: pd.DataFrame, excel: pd.ExcelFile,
+                                     folha: str, coluna: str, onde: str,
+                                     avisos: list[str]) -> pd.DataFrame:
+    """Reconverte a coluna a partir das celulas em bruto quando la havia texto.
+
+    So faz alguma coisa se a coluna tiver mesmo celulas de texto com
+    separadores ou simbolos de moeda. Numeros a serio nao passam por aqui.
+    """
+    brutos = ler_coluna_bruta(excel, folha, coluna, len(df))
+    if brutos is None:
+        return df
+
+    formatados = [
+        v for v in brutos
+        if isinstance(v, str) and classificar_formato(limpar_numero(v)) in
+        ("pt", "en", "ambiguo")
+    ]
+    if not formatados:
+        return df
+
+    coluna_bruta = pd.Series(brutos, index=df.index, dtype="object")
+    convertida, _ = converter_texto_formatado(coluna_bruta, onde, coluna)
+
+    mensagem = (
+        f"A coluna «{coluna}» da folha «{folha}» tem números gravados como texto "
+        "(com separadores de milhares ou símbolos de moeda). Foram convertidos a "
+        "partir da célula original."
+    )
+    if pd.api.types.is_numeric_dtype(df[coluna]):
+        antes = pd.to_numeric(df[coluna], errors="coerce")
+        diferentes = int((~antes.sub(convertida).abs().le(1e-9)).sum())
+        if diferentes:
+            mensagem += (
+                f" Atenção: {diferentes} valor(es) tinham sido lidos com o ponto "
+                "como separador decimal, o que dava mil vezes menos. Confirma-os "
+                "no relatório."
+            )
+    acrescentar(avisos, mensagem)
+
+    df = df.copy()
+    df[coluna] = convertida
+    return df
+
+
 def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
                           onde: str, avisos: list[str]) -> pd.DataFrame:
     """Garante que a coluna e numerica. Nunca soma texto em silencio."""
@@ -366,7 +539,7 @@ def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
             "não números."
         )
 
-    convertida = pd.to_numeric(df[coluna], errors="coerce")
+    convertida, com_formatacao = converter_texto_formatado(df[coluna], onde, coluna)
     validos = int(convertida.notna().sum())
     if validos == 0:
         exemplos = [str(v) for v in df[coluna].dropna().unique()[:3]]
@@ -379,7 +552,9 @@ def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
     perdidas = int(convertida.isna().sum()) - ja_vazias
     mensagem = (
         f"A coluna «{coluna}» da folha «{folha}» estava guardada como texto e "
-        "foi convertida para número."
+        "foi convertida para número"
+        + (" (separadores de milhares e símbolos de moeda incluídos)." if com_formatacao
+           else ".")
     )
     if perdidas > 0:
         nao_numericas = df.loc[convertida.isna() & df[coluna].notna(), coluna]

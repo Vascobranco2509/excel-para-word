@@ -117,6 +117,119 @@ def test_coluna_de_datas_como_valor_e_erro(tmp_path):
         preparar(ficheiro, grafico())
 
 
+# ------------------------------------------------------- numeros com formato
+# Encontrados no teste com um ficheiro a serio: uma exportacao portuguesa
+# grava o dinheiro como texto, «1.250,00 €», que nao e numero nenhum para
+# o pandas.
+
+
+def test_moeda_a_portuguesa_e_convertida(tmp_path):
+    ficheiro = escrever_excel(
+        tmp_path / "euros.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro", "Marco"],
+         "Valor": ["1.250,00 €", "980,50 €", "0,00 €"]},
+    )
+    serie, _, avisos, _ = preparar(ficheiro, grafico())
+
+    assert serie["Janeiro"] == pytest.approx(1250.0)
+    assert serie["Fevereiro"] == pytest.approx(980.5)
+    assert serie["Marco"] == pytest.approx(0.0)
+    assert any("moeda" in aviso for aviso in avisos)
+
+
+def test_moeda_a_inglesa_e_convertida(tmp_path):
+    ficheiro = escrever_excel(
+        tmp_path / "dolares.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro"], "Valor": ["$1,250.00", "$980.50"]},
+    )
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert serie["Janeiro"] == pytest.approx(1250.0)
+    assert serie["Fevereiro"] == pytest.approx(980.5)
+
+
+def escrever_excel_com_texto(caminho: Path, cabecalhos: list[str],
+                             linhas: list[list]) -> Path:
+    """Escreve celulas tal e qual, sem o pandas pelo meio a interpretar."""
+    from openpyxl import Workbook
+
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    livro = Workbook()
+    folha = livro.active
+    folha.title = "Vendas"
+    folha.append(cabecalhos)
+    for linha in linhas:
+        folha.append(linha)
+    livro.save(caminho)
+    return caminho
+
+
+def test_formato_ambiguo_para_com_erro_em_vez_de_adivinhar(tmp_path):
+    """«1.250» tanto pode ser 1250 como 1,25. Adivinhar da um erro invisivel."""
+    ficheiro = escrever_excel_com_texto(
+        tmp_path / "ambiguo.xlsx",
+        ["Mes", "Valor"],
+        [["Janeiro", "1.250"], ["Fevereiro", "2.500"]],
+    )
+    with pytest.raises(gr.ErroDados, match="ambíguo"):
+        preparar(ficheiro, grafico())
+
+
+def test_texto_ambiguo_nao_e_lido_como_decimal_pelo_pandas(tmp_path):
+    """O pandas le o texto «1.250» como 1,25. Num Excel portugues isso e mil
+    vezes menos. A celula em bruto tem de mandar."""
+    ficheiro = escrever_excel_com_texto(
+        tmp_path / "mil_vezes.xlsx",
+        ["Mes", "Valor"],
+        [["Janeiro", "1.250"], ["Fevereiro", "980,50"]],
+    )
+    serie, _, avisos, _ = preparar(ficheiro, grafico())
+
+    assert serie["Janeiro"] == pytest.approx(1250.0), "leu 1,25 em vez de 1.250"
+    assert serie["Fevereiro"] == pytest.approx(980.5)
+    assert any("texto" in aviso for aviso in avisos)
+
+
+def test_numeros_a_serio_nao_sao_mexidos(tmp_path):
+    """Uma coluna de numeros verdadeiros nao pode passar pelo caminho do texto."""
+    ficheiro = escrever_excel(
+        tmp_path / "numeros.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro", "Marco"], "Valor": [1.234, 2.5, 1250.0]},
+    )
+    serie, _, avisos, _ = preparar(ficheiro, grafico())
+    assert serie["Janeiro"] == pytest.approx(1.234)
+    assert serie["Marco"] == pytest.approx(1250.0)
+    assert avisos == []
+
+
+def test_valor_ambiguo_resolve_se_a_coluna_o_provar(tmp_path):
+    """«980,50» prova que a virgula e decimal; logo «1.250» e mil duzentos e cinquenta."""
+    ficheiro = escrever_excel(
+        tmp_path / "resolvido.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro"], "Valor": ["1.250", "980,50"]},
+    )
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert serie["Janeiro"] == pytest.approx(1250.0)
+    assert serie["Fevereiro"] == pytest.approx(980.5)
+
+
+def test_formatos_misturados_param_com_erro(tmp_path):
+    ficheiro = escrever_excel(
+        tmp_path / "misturado.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro"], "Valor": ["1.250,00", "2,500.00"]},
+    )
+    with pytest.raises(gr.ErroDados, match="incompatíveis"):
+        preparar(ficheiro, grafico())
+
+
+def test_espaco_como_separador_de_milhares(tmp_path):
+    ficheiro = escrever_excel(
+        tmp_path / "espacos.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro"], "Valor": ["1 250,00", "980,50"]},
+    )
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert serie["Janeiro"] == pytest.approx(1250.0)
+
+
 # --------------------------------------------------------------- celulas vazias
 
 

@@ -115,6 +115,14 @@ apanha planos escritos contra uma versão antiga.
 
 ### Duas decisões que valem a pena explicar
 
+**Números guardados como texto são convertidos, mas só quando é seguro.**
+`1.250,00 €` e `$1,250.00` são lidos corretamente, e a convenção é deduzida dos
+valores da própria coluna: se lá estiver um `980,50`, fica provado que a vírgula
+é decimal. Quando nada o prova — uma coluna só com `1.250` e `2.500` — para com
+erro em vez de adivinhar, porque `1.250` tanto pode ser mil duzentos e cinquenta
+como um vírgula vinte e cinco, e um palpite errado dá um relatório mil vezes ao
+lado com ar perfeitamente normal.
+
 **A ordem das categorias é a ordem do ficheiro, não a alfabética.** Se a tua
 coluna tem os meses por ordem, o gráfico sai por ordem. Ordenar por alfabeto
 poria Abril antes de Janeiro e daria uma série temporal errada.
