@@ -61,7 +61,7 @@ def preparar(caminho: Path, config: dict):
     """Corre a preparacao de dados e devolve (serie, n_linhas, avisos, notas)."""
     avisos: list[str] = []
     notas: list[str] = []
-    excel = gr.abrir_excel(caminho)
+    excel = gr.abrir_dados(caminho)
     serie, n_linhas, _, _ = gr.preparar_dados(excel, config, 1, avisos, notas)
     return serie, n_linhas, avisos, notas
 
@@ -70,7 +70,7 @@ def preparar_completo(caminho: Path, config: dict):
     """Como preparar(), mas devolve tambem o eixo temporal e a serie anual."""
     avisos: list[str] = []
     notas: list[str] = []
-    excel = gr.abrir_excel(caminho)
+    excel = gr.abrir_dados(caminho)
     serie, n_linhas, temporal, anual = gr.preparar_dados(excel, config, 1, avisos, notas)
     return serie, n_linhas, temporal, anual, avisos
 
@@ -336,7 +336,7 @@ def test_aviso_repetido_so_aparece_uma_vez(tmp_path):
     )
     avisos: list[str] = []
     notas: list[str] = []
-    excel = gr.abrir_excel(ficheiro)
+    excel = gr.abrir_dados(ficheiro)
     gr.preparar_dados(excel, grafico(), 1, avisos, notas)
     gr.preparar_dados(excel, grafico(titulo="Outro"), 2, avisos, notas)
 
@@ -421,6 +421,170 @@ def test_circular_com_muitas_fatias_avisa(tmp_path):
     assert any("fatias" in aviso for aviso in avisos)
 
 
+# ------------------------------------------------------------------- CSV
+
+
+def escrever_csv(caminho: Path, linhas: list[str], separador: str = ";",
+                 codificacao: str = "utf-8") -> Path:
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    caminho.write_text("\n".join(linhas), encoding=codificacao)
+    return caminho
+
+
+def test_csv_com_ponto_e_virgula(tmp_path):
+    """O Excel portugues exporta com «;»."""
+    ficheiro = escrever_csv(tmp_path / "v.csv", [
+        "Mes;Valor", "Janeiro;10", "Fevereiro;20", "Marco;30",
+    ])
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert list(serie.index) == ["Janeiro", "Fevereiro", "Marco"]
+    assert serie.sum() == 60
+
+
+def test_csv_com_virgula(tmp_path):
+    ficheiro = escrever_csv(tmp_path / "v.csv", [
+        "Mes,Valor", "Janeiro,10", "Fevereiro,20",
+    ])
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert serie.sum() == 30
+
+
+def test_csv_em_cp1252_com_acentos(tmp_path):
+    """Ficheiros exportados por Windows antigos nao sao UTF-8."""
+    ficheiro = escrever_csv(tmp_path / "v.csv", [
+        "Regiao;Valor", "Lisboa;10", "Évora;20", "Bragança;30",
+    ], codificacao="cp1252")
+    serie, _, _, _ = preparar(ficheiro, grafico(eixo_x="Regiao"))
+    assert "Évora" in list(serie.index)
+    assert "Bragança" in list(serie.index)
+
+
+def test_csv_com_metadados_por_cima(tmp_path):
+    """Exportacoes do Google Ads trazem linhas de relatorio antes da tabela."""
+    ficheiro = escrever_csv(tmp_path / "v.csv", [
+        "Relatorio de campanhas", "Intervalo: ultimo mes", "",
+        "Mes;Valor", "Janeiro;10", "Fevereiro;20",
+    ])
+    serie, _, avisos, _ = preparar(ficheiro, grafico())
+    assert serie.sum() == 30
+    assert any("não começa na primeira linha" in a for a in avisos)
+
+
+def test_csv_com_moeda_a_portuguesa(tmp_path):
+    ficheiro = escrever_csv(tmp_path / "v.csv", [
+        "Mes;Valor", "Janeiro;1.250,00 €", "Fevereiro;980,50 €",
+    ])
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert serie["Janeiro"] == pytest.approx(1250.0)
+    assert serie["Fevereiro"] == pytest.approx(980.5)
+
+
+def test_csv_ignora_a_folha_indicada_no_plano(tmp_path):
+    ficheiro = escrever_csv(tmp_path / "v.csv", ["Mes;Valor", "Janeiro;10", "Fevereiro;20"])
+    avisos: list[str] = []
+    notas: list[str] = []
+    fonte = gr.abrir_dados(ficheiro)
+    gr.preparar_dados(fonte, grafico(folha="Vendas"), 1, avisos, notas)
+    assert any("não tem folhas" in n for n in notas)
+
+
+def test_csv_nao_transforma_texto_em_aviso_bloqueante(tmp_path):
+    """Num CSV e tudo texto: se isso fosse aviso, bloqueava sempre e virava ruido."""
+    ficheiro = escrever_csv(tmp_path / "v.csv", ["Mes;Valor", "Janeiro;10", "Fevereiro;20"])
+    _, _, avisos, notas = preparar(ficheiro, grafico())
+    assert avisos == []
+    assert any("guardada como texto" in n for n in notas)
+
+
+def test_csv_com_celulas_perdidas_continua_a_avisar(tmp_path):
+    ficheiro = escrever_csv(tmp_path / "v.csv", [
+        "Mes;Valor", "Janeiro;10", "Fevereiro;vinte", "Marco;30",
+    ])
+    _, _, avisos, _ = preparar(ficheiro, grafico())
+    assert any("vinte" in a for a in avisos)
+
+
+def test_xlsm_e_aceite(tmp_path):
+    caminho = tmp_path / "com_macros.xlsm"
+    pd.DataFrame({"Mes": ["Janeiro", "Fevereiro"], "Valor": [10, 20]}).to_excel(
+        caminho, sheet_name="Vendas", index=False)
+    serie, _, _, _ = preparar(caminho, grafico())
+    assert serie.sum() == 30
+
+
+def test_xls_antigo_da_mensagem_util(tmp_path):
+    falso = tmp_path / "antigo.xls"
+    falso.write_bytes(b"nao interessa")
+    with pytest.raises(gr.ErroDados, match="formato antigo"):
+        gr.abrir_dados(falso)
+
+
+def test_folha_em_falta_com_varias_folhas_e_erro(tmp_path):
+    caminho = tmp_path / "duas.xlsx"
+    with pd.ExcelWriter(caminho) as escritor:
+        pd.DataFrame({"Mes": ["Janeiro"], "Valor": [1]}).to_excel(
+            escritor, sheet_name="Vendas", index=False)
+        pd.DataFrame({"Mes": ["Janeiro"], "Valor": [2]}).to_excel(
+            escritor, sheet_name="Custos", index=False)
+    config = grafico()
+    config.pop("folha", None)
+    with pytest.raises(gr.ErroDados, match="não diz de que folha"):
+        preparar(caminho, config)
+
+
+def test_folha_unica_dispensa_o_campo(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "uma.xlsx", {"Mes": ["Janeiro"], "Valor": [7]})
+    config = grafico()
+    config.pop("folha", None)
+    serie, _, _, _ = preparar(ficheiro, config)
+    assert serie.sum() == 7
+
+
+# ---------------------------------------------------------- datas em texto
+
+
+def test_datas_em_texto_com_convencao_provada(tmp_path):
+    """Um dia acima de 12 prova que e dia/mes."""
+    ficheiro = escrever_csv(tmp_path / "d.csv", [
+        "Data;Valor",
+        "31/01/2026;10", "15/02/2026;20", "03/03/2026;30", "20/04/2026;40",
+    ])
+    serie, _, _, notas = preparar(ficheiro, grafico(eixo_x="Data"))
+    assert any("reconhecida como datas" in n for n in notas)
+    assert [d.month for d in serie.index] == [1, 2, 3, 4]
+
+
+def test_datas_ambiguas_ficam_categoricas(tmp_path):
+    """Nenhum dia acima de 12: nao da para saber se e dia/mes ou mes/dia."""
+    ficheiro = escrever_csv(tmp_path / "d.csv", [
+        "Data;Valor", "01/02/2026;10", "03/04/2026;20", "05/06/2026;30",
+    ])
+    _, _, _, notas = preparar(ficheiro, grafico(eixo_x="Data"))
+    assert any("não é possível saber" in n for n in notas)
+
+
+def test_datas_iso_sao_sempre_aceites(tmp_path):
+    ficheiro = escrever_csv(tmp_path / "d.csv", [
+        "Data;Valor", "2026-01-05;10", "2026-02-06;20", "2026-03-07;30",
+    ])
+    serie, _, _, _ = preparar(ficheiro, grafico(eixo_x="Data"))
+    assert [d.month for d in serie.index] == [1, 2, 3]
+
+
+def test_datas_com_convencoes_misturadas_param_com_erro(tmp_path):
+    ficheiro = escrever_csv(tmp_path / "d.csv", [
+        "Data;Valor", "31/01/2026;10", "01/31/2026;20",
+    ])
+    with pytest.raises(gr.ErroDados, match="incompatíveis"):
+        preparar(ficheiro, grafico(eixo_x="Data"))
+
+
+def test_separador_detetado_em_varios_formatos():
+    assert gr.detetar_separador("a;b;c\n1;2;3") == ";"
+    assert gr.detetar_separador("a,b,c\n1,2,3") == ","
+    assert gr.detetar_separador("a\tb\tc\n1\t2\t3") == "\t"
+
+
 # ------------------------------------------------------------ ficheiro e plano
 
 
@@ -428,12 +592,12 @@ def test_extensao_errada_da_mensagem_clara(tmp_path):
     falso = tmp_path / "antigo.xls"
     falso.write_bytes(b"nao interessa")
     with pytest.raises(gr.ErroDados, match=r"\.xlsx"):
-        gr.abrir_excel(falso)
+        gr.abrir_dados(falso)
 
 
 def test_ficheiro_inexistente_da_mensagem_clara(tmp_path):
     with pytest.raises(gr.ErroDados, match="não foi encontrado"):
-        gr.abrir_excel(tmp_path / "nao_existe.xlsx")
+        gr.abrir_dados(tmp_path / "nao_existe.xlsx")
 
 
 def test_caminho_com_espacos_e_acentos_funciona(tmp_path):
@@ -554,6 +718,89 @@ def test_classificacao_usa_os_limiares_documentados():
     assert gr.classificar(14.9, 15, 35, termos) == "baixa"
     assert gr.classificar(20.0, 15, 35, termos) == "moderada"
     assert gr.classificar(35.1, 15, 35, termos) == "elevada"
+
+
+# ------------------------------------------- achados em dados publicos reais
+# Cada um destes apareceu ao correr a skill sobre dados abertos de terceiros
+# (PIB do Banco Mundial, anomalias de temperatura global). Ficam aqui presos
+# com ficheiros sinteticos minimos, sem meter dados de ninguem no repositorio.
+
+
+def test_indice_sazonal_recusa_series_com_negativos():
+    """Anomalias de temperatura oscilam a volta de zero: o indice e uma razao
+    e explodia, saindo «índice -0,34 — 134% abaixo», um disparate com ar de rigor."""
+    rotulos, valores = [], []
+    for ano in (2024, 2025):
+        for mes in range(1, 13):
+            rotulos.append(f"{ano}-{mes:02d}")
+            valores.append(-0.5 if mes % 2 else 0.4)
+    resultado = gr.indice_sazonal(pd.Series(valores, index=rotulos))
+    assert resultado["impossivel"] == "negativos"
+
+
+def test_seccao_sazonalidade_explica_a_recusa_por_negativos():
+    rotulos, valores = [], []
+    for ano in (2024, 2025):
+        for mes in range(1, 13):
+            rotulos.append(f"{ano}-{mes:02d}")
+            valores.append(-0.5 if mes % 2 else 0.4)
+    blocos = gr.montar_analise(pd.Series(valores, index=rotulos), grafico(), 24, True, None)
+    assert "positivos" in texto_de(blocos, "Sazonalidade")
+
+
+def test_declive_pequeno_nao_e_arredondado_para_zero():
+    """Um declive de 0,0005 aparecia como «+0», o que nao diz nada."""
+    valores = [i * 0.0005 for i in range(12)]
+    serie = pd.Series(valores, index=[f"P{i}" for i in range(12)])
+    blocos = gr.montar_analise(serie, grafico(), 12, True, None)
+    assert "+0 por período" not in texto_de(blocos, "Tendência")
+    assert "0,0005" in texto_de(blocos, "Tendência")
+
+
+def test_previsao_de_valores_pequenos_nao_colapsa_em_inteiros():
+    """A previsao arredondada a inteiros dava «entre 0 e 1» em dados pequenos."""
+    serie = pd.Series([i * 0.01 for i in range(12)], index=[f"P{i}" for i in range(12)])
+    _, texto = gr.secao_previsao(serie, 3)
+    assert "entre 0 e 1" not in texto
+
+
+def test_anos_anteriores_a_1900_sao_reconhecidos():
+    """A serie de temperatura comeca em 1850 e ficava como categoria."""
+    assert gr.e_ano(1850) is True
+    assert gr.extrair_ano("1850-01") == 1850
+    assert gr.parece_temporal(pd.Index(["1850-01", "1850-02", "1850-03"])) is True
+
+
+def test_formato_ano_mes_e_reconhecido_sem_ajuda():
+    """As exportacoes de plataformas trazem «2023-01» e nenhuma dica no plano."""
+    assert gr.parece_temporal(pd.Index(["2023-01", "2023-02", "2023-03"])) is True
+
+
+def test_barras_com_categorias_a_mais_avisam(tmp_path):
+    """262 paises num grafico de barras sao ilegiveis, e nada avisava."""
+    categorias = [f"Pais {i}" for i in range(60)]
+    ficheiro = escrever_excel(tmp_path / "muitos.xlsx",
+                              {"Mes": categorias, "Valor": list(range(60))})
+    _, _, avisos, _ = preparar(ficheiro, grafico())
+    assert any("categorias" in a and "ilegíveis" in a for a in avisos)
+
+
+def test_linhas_com_muitos_pontos_nao_avisam(tmp_path):
+    """Numa linha, 60 pontos leem-se bem; o aviso das barras seria falso positivo."""
+    categorias = [f"P{i}" for i in range(60)]
+    ficheiro = escrever_excel(tmp_path / "linha.xlsx",
+                              {"Mes": categorias, "Valor": list(range(60))})
+    _, _, avisos, _ = preparar(ficheiro, grafico(tipo="linhas"))
+    assert not any("ilegíveis" in a for a in avisos)
+
+
+def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
+    """O README dizia que bloqueava; o codigo so o registava depois de gerar."""
+    categorias = [f"C{i}" for i in range(50)]
+    ficheiro = escrever_excel(tmp_path / "tabela.xlsx",
+                              {"Mes": categorias, "Valor": list(range(50))})
+    _, _, avisos, _ = preparar(ficheiro, grafico(tipo="linhas", tabela_dados=True))
+    assert any("ficariam de fora" in a for a in avisos)
 
 
 # ---------------------------------------------------------------- previsao

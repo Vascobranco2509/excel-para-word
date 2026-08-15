@@ -13,6 +13,8 @@ O ficheiro Excel de origem nunca e escrito nem alterado.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import math
 import re
@@ -36,8 +38,8 @@ from docx.shared import Inches, Pt
 TIPOS_GRAFICO = ("barras", "linhas", "circular")
 AGREGACOES = ("soma", "media", "contagem")
 
-CHAVES_OBRIGATORIAS = ("tipo", "folha", "eixo_x", "agregacao", "titulo")
-CHAVES_OPCIONAIS = ("eixo_y", "nota", "tabela_dados", "linha_cabecalho",
+CHAVES_OBRIGATORIAS = ("tipo", "eixo_x", "agregacao", "titulo")
+CHAVES_OPCIONAIS = ("folha", "eixo_y", "nota", "tabela_dados", "linha_cabecalho",
                     "coluna_periodo", "eixo_temporal", "previsao")
 
 # ate onde se procura o cabecalho quando a tabela nao comeca na primeira linha
@@ -45,6 +47,11 @@ MAX_LINHAS_PROCURA_CABECALHO = 25
 
 MAX_LINHAS_TABELA = 30
 MAX_FATIAS_CIRCULAR = 12
+# acima disto as barras ficam finas como cabelos e os rotulos ilegiveis
+MAX_CATEGORIAS_LEGIVEIS = 40
+# anos aceites: dados reais recuam a 1850 e mais atras
+ANO_MINIMO = 1000
+ANO_MAXIMO = 2999
 
 # rotulos que denunciam uma linha de totais deixada por um sistema de exportacao
 ROTULOS_DE_TOTAL = frozenset({"total", "totais", "total geral", "subtotal", "soma", "sum"})
@@ -132,6 +139,29 @@ def formatar_numero(valor) -> str:
     return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
+def formatar_com_precisao(valor) -> str:
+    """Formata guardando casas decimais suficientes para o numero dizer algo.
+
+    Encontrado com dados reais de temperatura: um declive de 0,0005 arredondado
+    a duas casas aparecia como «+0», e a previsao inteira colapsava em «entre 0
+    e 1». O numero de casas passa a depender da grandeza.
+    """
+    numero = como_numero(valor)
+    if numero is None:
+        return formatar_numero(valor)
+    magnitude = abs(numero)
+    if magnitude >= 100:
+        casas = 0
+    elif magnitude >= 1:
+        casas = 2
+    elif magnitude >= 0.01:
+        casas = 4
+    else:
+        casas = 6
+    texto = f"{numero:,.{casas}f}".rstrip("0").rstrip(".") if casas else f"{numero:,.0f}"
+    return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
 def formatar_categoria(valor) -> str:
     """Formata o rotulo de uma categoria; datas ficam em dd/mm/aaaa."""
     if isinstance(valor, pd.Timestamp):
@@ -148,6 +178,13 @@ def formatar_categoria(valor) -> str:
 
 def listar(itens) -> str:
     return ", ".join(f"«{item}»" for item in itens)
+
+
+def onde_fica(folha: str) -> str:
+    """«da folha X» num Excel, «do ficheiro» num CSV, que nao tem folhas."""
+    if folha == FonteCSV.NOME_UNICO:
+        return "do ficheiro"
+    return f"da folha «{folha}»"
 
 
 def acrescentar(avisos: list[str], mensagem: str) -> None:
@@ -212,7 +249,7 @@ def aplicar_formato(limpo: str, convencao: str) -> float | None:
         return None
 
 
-def detetar_linha_cabecalho(excel: pd.ExcelFile, folha: str) -> int:
+def detetar_linha_cabecalho(fonte, folha: str) -> int:
     """Descobre em que linha comeca a tabela. Devolve o indice, base 0.
 
     Muita folha real tem o titulo do relatorio e a data de exportacao por
@@ -224,8 +261,8 @@ def detetar_linha_cabecalho(excel: pd.ExcelFile, folha: str) -> int:
     devolve 0 -- o comportamento de sempre.
     """
     try:
-        amostra = excel.parse(folha, header=None,
-                              nrows=MAX_LINHAS_PROCURA_CABECALHO)
+        amostra = fonte.ler(folha, cabecalho=None,
+                            nrows=MAX_LINHAS_PROCURA_CABECALHO)
     except Exception:
         return 0
 
@@ -242,36 +279,6 @@ def detetar_linha_cabecalho(excel: pd.ExcelFile, folha: str) -> int:
     return 0
 
 
-def ler_coluna_bruta(excel: pd.ExcelFile, folha: str, nome: str,
-                     n_linhas: int, linha_cabecalho: int = 0) -> list | None:
-    """Devolve os valores da coluna tal como estao gravados na celula.
-
-    E preciso porque o pandas decide sozinho que o texto «1.250» vale 1,25.
-    Num Excel portugues isso quer dizer mil vezes menos, sem erro nenhum e
-    sem aviso nenhum. A celula em bruto ainda sabe que aquilo era texto.
-
-    Devolve None se nao conseguir alinhar com o que o pandas leu, para o
-    resto do programa seguir pelo caminho normal em vez de arriscar.
-    """
-    primeira = linha_cabecalho + 1  # openpyxl conta as linhas a partir de 1
-    try:
-        folha_bruta = excel.book[folha]
-        cabecalhos = [
-            c.value for c in next(folha_bruta.iter_rows(min_row=primeira,
-                                                        max_row=primeira))
-        ]
-        indice = cabecalhos.index(nome)
-    except (AttributeError, KeyError, StopIteration, ValueError):
-        return None
-
-    valores = [
-        linha[indice].value if indice < len(linha) else None
-        for linha in folha_bruta.iter_rows(min_row=primeira + 1)
-    ]
-    # o pandas ignora linhas totalmente vazias no fim; so seguimos se bater certo
-    while valores and valores[-1] is None and len(valores) > n_linhas:
-        valores.pop()
-    return valores if len(valores) == n_linhas else None
 
 
 def converter_texto_formatado(coluna: pd.Series, onde: str,
@@ -484,30 +491,244 @@ def validar_grafico(grafico, indice: int) -> None:
             )
 
 
-def abrir_excel(caminho: Path) -> pd.ExcelFile:
+class FonteExcel:
+    """Le .xlsx e .xlsm. As macros de um .xlsm nunca sao executadas."""
+
+    def __init__(self, caminho: Path):
+        try:
+            self._livro = pd.ExcelFile(caminho, engine="openpyxl")
+        except PermissionError:
+            raise ErroDados(
+                f"Não consigo ler «{caminho}»: o ficheiro está aberto noutro programa "
+                "(provavelmente o Excel). Fecha-o e tenta outra vez."
+            ) from None
+        except Exception as erro:  # ficheiro corrompido, zip invalido, etc.
+            raise ErroDados(f"Não consigo abrir «{caminho}» como Excel: {erro}") from None
+        self.notas: list[str] = []
+
+    @property
+    def folhas(self) -> list[str]:
+        return list(self._livro.sheet_names)
+
+    def ler(self, folha: str, cabecalho=0, nrows=None) -> pd.DataFrame:
+        return self._livro.parse(folha, header=cabecalho, nrows=nrows)
+
+    def bruto(self, folha: str, coluna: str, n_linhas: int,
+              cabecalho: int = 0) -> list | None:
+        """Valores tal como estao gravados na celula.
+
+        E preciso porque o pandas decide sozinho que o texto «1.250» vale 1,25.
+        Num Excel portugues isso quer dizer mil vezes menos, sem erro nenhum e
+        sem aviso nenhum. A celula em bruto ainda sabe que aquilo era texto.
+
+        Devolve None se nao conseguir alinhar com o que o pandas leu, para o
+        resto do programa seguir pelo caminho normal em vez de arriscar.
+        """
+        primeira = cabecalho + 1  # openpyxl conta as linhas a partir de 1
+        try:
+            folha_bruta = self._livro.book[folha]
+            cabecalhos = [
+                c.value for c in next(folha_bruta.iter_rows(min_row=primeira,
+                                                            max_row=primeira))
+            ]
+            indice = cabecalhos.index(coluna)
+        except (AttributeError, KeyError, StopIteration, ValueError):
+            return None
+
+        valores = [
+            linha[indice].value if indice < len(linha) else None
+            for linha in folha_bruta.iter_rows(min_row=primeira + 1)
+        ]
+        # o pandas ignora linhas vazias no fim; so seguimos se bater certo
+        while valores and valores[-1] is None and len(valores) > n_linhas:
+            valores.pop()
+        return valores if len(valores) == n_linhas else None
+
+
+class FonteCSV:
+    """Le CSV.
+
+    Um CSV nao tem folhas, nao tem tipos e nao tem celulas: e tudo texto. Isso
+    aqui e uma vantagem -- le-se tudo como texto e a conversao passa inteira
+    pelo converter_texto_formatado, que so aceita o inequivoco. O caminho do
+    CSV fica assim mais seguro do que o do Excel, nao menos.
+    """
+
+    NOME_UNICO = "(ficheiro)"
+
+    def __init__(self, caminho: Path):
+        self.notas: list[str] = []
+        texto, codificacao = self._ler_texto(caminho)
+        separador = detetar_separador(texto)
+
+        self.notas.append(
+            f"CSV lido com «{separador}» como separador e codificação "
+            f"{codificacao}."
+        )
+        # As linhas de metadados por cima da tabela tem menos colunas do que
+        # ela, e o pandas recusa-se a ler um ficheiro assim. Conta-se primeiro
+        # a linha mais larga e dao-se nomes a todas as colunas.
+        try:
+            largura = max(
+                (len(linha) for linha in csv.reader(io.StringIO(texto),
+                                                    delimiter=separador)),
+                default=0,
+            )
+        except csv.Error:
+            largura = 0
+
+        try:
+            self._tabela = pd.read_csv(
+                io.StringIO(texto), sep=separador, header=None,
+                names=range(largura) if largura else None,
+                dtype=str, keep_default_na=True, skip_blank_lines=False,
+            )
+        except Exception as erro:
+            raise ErroDados(f"Não consigo interpretar «{caminho}» como CSV: {erro}") from None
+
+        if self._tabela.empty:
+            raise ErroDados(f"O ficheiro «{caminho}» não tem linhas nenhumas.")
+
+    @staticmethod
+    def _ler_texto(caminho: Path) -> tuple[str, str]:
+        # utf-8-sig aceita o BOM; cp1252 e o que o Excel portugues costuma gravar
+        for codificacao in ("utf-8-sig", "cp1252", "latin-1"):
+            try:
+                return caminho.read_text(encoding=codificacao), codificacao
+            except UnicodeDecodeError:
+                continue
+            except PermissionError:
+                raise ErroDados(
+                    f"Não consigo ler «{caminho}»: o ficheiro está aberto noutro "
+                    "programa. Fecha-o e tenta outra vez."
+                ) from None
+        raise ErroDados(
+            f"Não consigo descodificar «{caminho}». Tentei UTF-8, cp1252 e latin-1."
+        )
+
+    @property
+    def folhas(self) -> list[str]:
+        return [self.NOME_UNICO]
+
+    def ler(self, folha: str, cabecalho=0, nrows=None) -> pd.DataFrame:
+        tabela = self._tabela if nrows is None else self._tabela.head(nrows)
+        if cabecalho is None:
+            return tabela.reset_index(drop=True)
+        corpo = tabela.iloc[cabecalho + 1:].reset_index(drop=True)
+        corpo.columns = [
+            str(c) if pd.notna(c) else f"Unnamed: {i}"
+            for i, c in enumerate(tabela.iloc[cabecalho])
+        ]
+        return corpo
+
+    def bruto(self, folha: str, coluna: str, n_linhas: int,
+              cabecalho: int = 0) -> list | None:
+        corpo = self.ler(folha, cabecalho)
+        if coluna not in corpo.columns or len(corpo) != n_linhas:
+            return None
+        return [None if pd.isna(v) else v for v in corpo[coluna]]
+
+
+def detetar_separador(texto: str) -> str:
+    """Descobre o separador do CSV. O Excel portugues exporta com «;»."""
+    amostra = "\n".join(texto.splitlines()[:20])
+    try:
+        return csv.Sniffer().sniff(amostra, delimiters=";,\t|").delimiter
+    except csv.Error:
+        pass
+    # recurso: conta ocorrencias fora de aspas e fica com o mais frequente
+    contagens = {}
+    for candidato in (";", ",", "\t", "|"):
+        total, dentro_de_aspas = 0, False
+        for caractere in amostra:
+            if caractere == '"':
+                dentro_de_aspas = not dentro_de_aspas
+            elif caractere == candidato and not dentro_de_aspas:
+                total += 1
+        contagens[candidato] = total
+    melhor = max(contagens, key=contagens.get)
+    return melhor if contagens[melhor] > 0 else ","
+
+
+def abrir_dados(caminho: Path):
     if not caminho.exists():
         raise ErroDados(f"O ficheiro «{caminho}» não foi encontrado.")
-    if caminho.suffix.lower() != ".xlsx":
-        extensao = caminho.suffix or "sem extensão"
-        raise ErroDados(
-            f"Só são suportados ficheiros .xlsx. Recebi «{extensao}». "
-            "Abre o ficheiro no Excel e grava como .xlsx."
-        )
-    try:
-        return pd.ExcelFile(caminho, engine="openpyxl")
-    except PermissionError:
-        raise ErroDados(
-            f"Não consigo ler «{caminho}»: o ficheiro está aberto noutro programa "
-            "(provavelmente o Excel). Fecha-o e tenta outra vez."
-        ) from None
-    except Exception as erro:  # ficheiro corrompido, zip invalido, etc.
-        raise ErroDados(f"Não consigo abrir «{caminho}» como Excel: {erro}") from None
+
+    extensao = caminho.suffix.lower()
+    if extensao in (".xlsx", ".xlsm"):
+        return FonteExcel(caminho)
+    if extensao in (".csv", ".txt", ".tsv"):
+        return FonteCSV(caminho)
+
+    raise ErroDados(
+        f"Não sei ler ficheiros «{extensao or 'sem extensão'}». "
+        "Suportados: .xlsx, .xlsm e .csv. "
+        + ("O .xls é o formato antigo do Excel; abre-o e grava como .xlsx."
+           if extensao == ".xls" else "Grava o ficheiro num destes formatos.")
+    )
 
 
 # --------------------------------------------------------------- preparacao
 
 
-def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
+def escolher_folha(fonte, grafico: dict, onde: str, notas: list[str]) -> str:
+    """Decide de que folha se le. Um CSV nao tem folhas; um Excel pode ter uma so."""
+    disponiveis = fonte.folhas
+    pedida = grafico.get("folha")
+
+    if isinstance(fonte, FonteCSV):
+        if pedida:
+            notas.append(
+                f"{grafico['titulo']}: o plano indica a folha «{pedida}», mas um CSV "
+                "não tem folhas. Foi ignorada."
+            )
+        return disponiveis[0]
+
+    if pedida is None:
+        if len(disponiveis) == 1:
+            return disponiveis[0]
+        raise ErroDados(
+            f"O {onde} não diz de que folha ler, e o ficheiro tem "
+            f"{len(disponiveis)}: {listar(disponiveis)}."
+        )
+
+    if pedida not in disponiveis:
+        raise ErroDados(
+            f"O {onde} pede a folha «{pedida}», que não existe no ficheiro. "
+            f"Folhas disponíveis: {listar(disponiveis)}."
+        )
+    return pedida
+
+
+def reconhecer_datas(df: pd.DataFrame, coluna: str, onde: str,
+                     notas: list[str]) -> pd.DataFrame:
+    """Converte o eixo x em datas quando for texto de datas com convencao provada."""
+    if pd.api.types.is_datetime64_any_dtype(df[coluna]):
+        return df
+    if df[coluna].isna().any() or not len(df):
+        return df
+
+    amostra = list(df[coluna])
+    if not all(partes_de_data(v) is not None for v in amostra):
+        return df
+
+    convertidas = converter_datas_texto(amostra, onde, coluna)
+    if convertidas is None:
+        notas.append(
+            f"A coluna «{coluna}» tem datas em texto, mas nenhum dia passa de 12: "
+            "não é possível saber se é dia/mês ou mês/dia. Ficou como categoria, "
+            "sem análise de tendência — trocar Janeiro por Fevereiro daria um "
+            "resultado errado com ar de certo."
+        )
+        return df
+
+    df = df.copy()
+    df[coluna] = convertidas
+    notas.append(f"A coluna «{coluna}» foi reconhecida como datas.")
+    return df
+
+
+def preparar_dados(fonte, grafico: dict, indice: int,
                    avisos: list[str], notas: list[str]) -> tuple[pd.Series, int]:
     """Le a folha, valida colunas e devolve a serie agregada e o nº de linhas usadas.
 
@@ -516,19 +737,14 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
     antes de Janeiro.
     """
     onde = f"gráfico {indice} («{grafico['titulo']}»)"
-    folha = grafico["folha"]
-    if folha not in excel.sheet_names:
-        raise ErroDados(
-            f"O {onde} pede a folha «{folha}», que não existe no ficheiro. "
-            f"Folhas disponíveis: {listar(excel.sheet_names)}."
-        )
+    folha = escolher_folha(fonte, grafico, onde, notas)
 
     pedida = grafico.get("linha_cabecalho")
     if pedida is None:
-        linha_cabecalho = detetar_linha_cabecalho(excel, folha)
+        linha_cabecalho = detetar_linha_cabecalho(fonte, folha)
         if linha_cabecalho > 0:
             acrescentar(avisos, (
-                f"A tabela da folha «{folha}» não começa na primeira linha. "
+                f"A tabela {onde_fica(folha)} não começa na primeira linha. "
                 f"Usei a linha {linha_cabecalho + 1} como cabeçalho, e ignorei as "
                 f"{linha_cabecalho} de cima (costumam ser o título e a data de "
                 "exportação). Confirma que é essa a linha certa."
@@ -536,14 +752,14 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
     else:
         linha_cabecalho = pedida - 1  # o plano conta as linhas como o Excel
 
-    df = excel.parse(folha, header=linha_cabecalho)
+    df = fonte.ler(folha, cabecalho=linha_cabecalho)
     if df.empty:
-        raise ErroDados(f"A folha «{folha}» não tem linhas nenhumas.")
+        raise ErroDados(f"A tabela {onde_fica(folha)} não tem linhas nenhumas.")
 
     fantasma = [c for c in df.columns if str(c).startswith("Unnamed:")]
     if fantasma:
         acrescentar(avisos, (
-            f"A folha «{folha}» tem {len(fantasma)} coluna(s) sem cabeçalho "
+            f"A tabela {onde_fica(folha)} tem {len(fantasma)} coluna(s) sem cabeçalho "
             f"({listar(fantasma)}). Costuma ser sinal de células soltas ao lado "
             "da tabela. Foram ignoradas."
         ))
@@ -551,9 +767,11 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
     eixo_x = grafico["eixo_x"]
     if eixo_x not in df.columns:
         raise ErroDados(
-            f"O {onde} pede a coluna «{eixo_x}», que não existe na folha «{folha}». "
+            f"O {onde} pede a coluna «{eixo_x}», que não existe {onde_fica(folha)}. "
             f"Colunas disponíveis: {listar(df.columns)}."
         )
+
+    df = reconhecer_datas(df, eixo_x, onde, notas)
 
     agregacao = grafico["agregacao"]
     eixo_y = grafico.get("eixo_y")
@@ -561,12 +779,14 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
     if eixo_y is not None:
         if eixo_y not in df.columns:
             raise ErroDados(
-                f"O {onde} pede a coluna «{eixo_y}», que não existe na folha «{folha}». "
+                f"O {onde} pede a coluna «{eixo_y}», que não existe {onde_fica(folha)}. "
                 f"Colunas disponíveis: {listar(df.columns)}."
             )
-        df = proteger_de_texto_reinterpretado(df, excel, folha, eixo_y, onde,
-                                              avisos, linha_cabecalho)
-        df = converter_para_numero(df, eixo_y, folha, onde, avisos)
+        df = proteger_de_texto_reinterpretado(
+            df, fonte, folha, eixo_y, onde, avisos, notas, linha_cabecalho,
+            tudo_texto=isinstance(fonte, FonteCSV))
+        df = converter_para_numero(df, eixo_y, folha, onde, avisos, notas,
+                                   tudo_texto=isinstance(fonte, FonteCSV))
         colunas_necessarias = [eixo_x, eixo_y]
     else:
         colunas_necessarias = [eixo_x]
@@ -576,7 +796,7 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
     ignoradas = antes - len(df)
     if ignoradas:
         acrescentar(avisos, (
-            f"{ignoradas} linha(s) da folha «{folha}» foram ignoradas por terem "
+            f"{ignoradas} linha(s) {onde_fica(folha)} foram ignoradas por terem "
             f"células vazias em {listar(colunas_necessarias)}."
         ))
     if df.empty:
@@ -609,6 +829,22 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
             f"categorias de «{eixo_x}» ({agregacao})."
         )
 
+    # so em barras: numa linha, 64 pontos leem-se bem; 64 barras nao
+    if grafico["tipo"] == "barras" and len(serie) > MAX_CATEGORIAS_LEGIVEIS:
+        acrescentar(avisos, (
+            f"{grafico['titulo']}: o gráfico ficaria com {len(serie)} categorias de "
+            f"«{eixo_x}». Acima de {MAX_CATEGORIAS_LEGIVEIS} as barras ficam finas "
+            "como cabelos e os rótulos ilegíveis. Considera agrupar, ou usar uma "
+            "coluna com menos categorias."
+        ))
+
+    if grafico.get("tabela_dados") and len(serie) > MAX_LINHAS_TABELA:
+        acrescentar(avisos, (
+            f"{grafico['titulo']}: a tabela de dados mostraria as primeiras "
+            f"{MAX_LINHAS_TABELA} de {len(serie)} categorias; "
+            f"{len(serie) - MAX_LINHAS_TABELA} ficariam de fora."
+        ))
+
     if grafico["tipo"] == "circular":
         if (serie < 0).any():
             negativas = [formatar_categoria(c) for c in serie[serie < 0].index]
@@ -640,7 +876,7 @@ def calcular_serie_anual(df: pd.DataFrame, grafico: dict, eixo_x: str,
     if coluna not in df.columns:
         raise ErroDados(
             f"O gráfico «{grafico['titulo']}» pede «{coluna}» como coluna de "
-            f"períodos, mas essa coluna não existe na folha «{folha}». "
+            f"períodos, mas essa coluna não existe {onde_fica(folha)}. "
             f"Colunas disponíveis: {listar(df.columns)}."
         )
 
@@ -648,7 +884,7 @@ def calcular_serie_anual(df: pd.DataFrame, grafico: dict, eixo_x: str,
     if anos.isna().all():
         if grafico.get("coluna_periodo"):
             acrescentar(avisos, (
-                f"Não consegui tirar anos da coluna «{coluna}» da folha «{folha}». "
+                f"Não consegui tirar anos da coluna «{coluna}» {onde_fica(folha)}. "
                 "A análise ano a ano ficou de fora deste gráfico."
             ))
         return None
@@ -662,16 +898,21 @@ def calcular_serie_anual(df: pd.DataFrame, grafico: dict, eixo_x: str,
     return {"soma": grupo.sum, "media": grupo.mean, "contagem": grupo.count}[agregacao]()
 
 
-def proteger_de_texto_reinterpretado(df: pd.DataFrame, excel: pd.ExcelFile,
+def proteger_de_texto_reinterpretado(df: pd.DataFrame, fonte,
                                      folha: str, coluna: str, onde: str,
-                                     avisos: list[str],
-                                     linha_cabecalho: int = 0) -> pd.DataFrame:
+                                     avisos: list[str], notas: list[str],
+                                     linha_cabecalho: int = 0,
+                                     tudo_texto: bool = False) -> pd.DataFrame:
     """Reconverte a coluna a partir das celulas em bruto quando la havia texto.
 
     So faz alguma coisa se a coluna tiver mesmo celulas de texto com
     separadores ou simbolos de moeda. Numeros a serio nao passam por aqui.
+
+    Num CSV e tudo texto: a mensagem vai para as notas, a menos que a releitura
+    tenha mudado algum valor. Um aviso que dispara sempre deixa de significar
+    alguma coisa.
     """
-    brutos = ler_coluna_bruta(excel, folha, coluna, len(df), linha_cabecalho)
+    brutos = fonte.bruto(folha, coluna, len(df), linha_cabecalho)
     if brutos is None:
         return df
 
@@ -687,20 +928,26 @@ def proteger_de_texto_reinterpretado(df: pd.DataFrame, excel: pd.ExcelFile,
     convertida, _ = converter_texto_formatado(coluna_bruta, onde, coluna)
 
     mensagem = (
-        f"A coluna «{coluna}» da folha «{folha}» tem números gravados como texto "
+        f"A coluna «{coluna}» {onde_fica(folha)} tem números gravados como texto "
         "(com separadores de milhares ou símbolos de moeda). Foram convertidos a "
         "partir da célula original."
     )
+    alterou_significado = False
     if pd.api.types.is_numeric_dtype(df[coluna]):
         antes = pd.to_numeric(df[coluna], errors="coerce")
         diferentes = int((~antes.sub(convertida).abs().le(1e-9)).sum())
         if diferentes:
+            alterou_significado = True
             mensagem += (
                 f" Atenção: {diferentes} valor(es) tinham sido lidos com o ponto "
                 "como separador decimal, o que dava mil vezes menos. Confirma-os "
                 "no relatório."
             )
-    acrescentar(avisos, mensagem)
+
+    if tudo_texto and not alterou_significado:
+        acrescentar(notas, mensagem)
+    else:
+        acrescentar(avisos, mensagem)
 
     df = df.copy()
     df[coluna] = convertida
@@ -708,8 +955,15 @@ def proteger_de_texto_reinterpretado(df: pd.DataFrame, excel: pd.ExcelFile,
 
 
 def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
-                          onde: str, avisos: list[str]) -> pd.DataFrame:
-    """Garante que a coluna e numerica. Nunca soma texto em silencio."""
+                          onde: str, avisos: list[str], notas: list[str],
+                          tudo_texto: bool = False) -> pd.DataFrame:
+    """Garante que a coluna e numerica. Nunca soma texto em silencio.
+
+    Num CSV e tudo texto por definicao, e o aviso «estava guardada como texto»
+    dispararia em todas as colunas de todos os ficheiros. Um aviso que aparece
+    sempre deixa de significar alguma coisa, e o bloqueio virava ruido. Nesse
+    caso a conversao vai para as notas; a perda de celulas continua a ser aviso.
+    """
     if pd.api.types.is_numeric_dtype(df[coluna]):
         return df
 
@@ -731,7 +985,7 @@ def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
     ja_vazias = int(df[coluna].isna().sum())
     perdidas = int(convertida.isna().sum()) - ja_vazias
     mensagem = (
-        f"A coluna «{coluna}» da folha «{folha}» estava guardada como texto e "
+        f"A coluna «{coluna}» {onde_fica(folha)} estava guardada como texto e "
         "foi convertida para número"
         + (" (separadores de milhares e símbolos de moeda incluídos)." if com_formatacao
            else ".")
@@ -743,7 +997,12 @@ def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
             f" {perdidas} célula(s) não eram números e foram ignoradas "
             f"(exemplos: {listar(exemplos)})."
         )
-    acrescentar(avisos, mensagem)
+
+    if tudo_texto and perdidas == 0:
+        # num CSV isto e o normal, nao uma surpresa
+        acrescentar(notas, mensagem)
+    else:
+        acrescentar(avisos, mensagem)
 
     df = df.copy()
     df[coluna] = convertida
@@ -948,7 +1207,7 @@ def numero_do_mes(rotulo) -> int | None:
         ordem = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho",
                  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
         return ordem.index(texto.replace("ç", "c")) + 1
-    encontrado = re.fullmatch(r"(19|20)\d{2}[-/](\d{1,2})", texto)
+    encontrado = re.fullmatch(r"(\d{4})[-/](\d{1,2})", texto)
     if encontrado:
         mes = int(encontrado.group(2))
         return mes if 1 <= mes <= 12 else None
@@ -972,9 +1231,18 @@ def indice_sazonal(serie: pd.Series) -> dict | None:
     if len(anos) < MIN_CICLOS_SAZONALIDADE or len(serie) < 12 * MIN_CICLOS_SAZONALIDADE:
         return None
 
+    # O indice sazonal e uma RAZAO: so tem significado em dados de escala
+    # racional, todos positivos. Encontrado com dados reais de anomalias de
+    # temperatura, que oscilam a volta de zero: a media perto de zero fazia o
+    # indice explodir e inverter sinais, e saia «indice -0,34 -- 134% abaixo»,
+    # que e um disparate com ar de rigor.
+    valores = [float(v) for v in serie.values]
+    if any(v <= 0 for v in valores):
+        return {"impossivel": "negativos"}
+
     media_geral = float(serie.mean())
-    if media_geral == 0:
-        return None
+    if media_geral <= 0:
+        return {"impossivel": "media"}
 
     por_mes: dict[int, list[float]] = {}
     for mes, valor in zip(meses, serie.values):
@@ -1004,7 +1272,7 @@ def proximos_rotulos(indice, quantos: int) -> list[str]:
         return [(ultimo + passo * (i + 1)).strftime("%d/%m/%Y") for i in range(quantos)]
 
     texto = str(ultimo)
-    encontrado = re.fullmatch(r"((?:19|20)\d{2})([-/])(\d{1,2})", texto)
+    encontrado = re.fullmatch(r"(\d{4})([-/])(\d{1,2})", texto)
     if encontrado:
         ano, separador, mes = int(encontrado.group(1)), encontrado.group(2), int(encontrado.group(3))
         rotulos = []
@@ -1043,6 +1311,8 @@ def prever(serie: pd.Series, horizonte: int) -> dict | None:
         return None
 
     sazonal = indice_sazonal(serie)
+    if sazonal is not None and "impossivel" in sazonal:
+        sazonal = None  # sem escala racional nao ha fator sazonal a aplicar
     if sazonal is not None:
         fatores = [sazonal["indices"].get(numero_do_mes(r), 1.0) for r in serie.index]
         if any(f <= 0 for f in fatores):
@@ -1138,7 +1408,73 @@ def como_numero(valor) -> float | None:
 
 def e_ano(valor) -> bool:
     numero = como_numero(valor)
-    return numero is not None and numero.is_integer() and 1900 <= numero <= 2100
+    return numero is not None and numero.is_integer() and ANO_MINIMO <= numero <= ANO_MAXIMO
+
+
+def partes_de_data(texto: str) -> tuple[int, int, int] | None:
+    """Parte «31/01/2026» ou «2026-01-31» em (primeiro, segundo, ano).
+
+    Nao decide ainda o que e dia e o que e mes: so separa. A decisao vem
+    depois, e so quando a coluna a provar.
+    """
+    limpo = str(texto).strip()
+    iso = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", limpo)
+    if iso:
+        return (int(iso.group(3)), int(iso.group(2)), int(iso.group(1)))  # ja e ano-mes-dia
+
+    outro = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})", limpo)
+    if outro:
+        return (int(outro.group(1)), int(outro.group(2)), int(outro.group(3)))
+    return None
+
+
+def converter_datas_texto(valores, onde: str, nome: str) -> list | None:
+    """Converte uma coluna de datas em texto, mas so com a convencao provada.
+
+    «01/02/2026» e 1 de Fevereiro em Portugal e 2 de Janeiro em ingles. Basta
+    um dia acima de 12 algures na coluna para a duvida acabar. Quando nada o
+    prova, devolve None e a coluna fica categorica: falhar a analise e seguro,
+    trocar Janeiro por Fevereiro nao e -- daria um indice sazonal errado com ar
+    de rigor, que e a pior combinacao possivel.
+    """
+    partes = []
+    for valor in valores:
+        if valor is None or (isinstance(valor, float) and math.isnan(valor)):
+            return None
+        separado = partes_de_data(valor)
+        if separado is None:
+            return None
+        partes.append(separado)
+
+    if not partes:
+        return None
+
+    # ISO ja vem em (dia, mes, ano) resolvido; para as outras, procurar prova
+    dia_primeiro = any(p[0] > 12 for p in partes)
+    mes_primeiro = any(p[1] > 12 for p in partes)
+
+    if dia_primeiro and mes_primeiro:
+        raise ErroDados(
+            f"A coluna «{nome}» usada no {onde} mistura formatos de data "
+            "incompatíveis: umas parecem dia/mês e outras mês/dia. "
+            "Formata a coluna toda como data no Excel."
+        )
+    if not dia_primeiro and not mes_primeiro:
+        todas_iso = all(
+            re.fullmatch(r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}", str(v).strip())
+            for v in valores
+        )
+        if not todas_iso:
+            return None
+
+    convertidas = []
+    for primeiro, segundo, ano in partes:
+        dia, mes = (primeiro, segundo) if not mes_primeiro else (segundo, primeiro)
+        try:
+            convertidas.append(pd.Timestamp(year=ano, month=mes, day=dia))
+        except ValueError:
+            return None
+    return convertidas
 
 
 def parece_temporal(indice) -> bool:
@@ -1160,6 +1496,10 @@ def parece_temporal(indice) -> bool:
     textos = [normalizar(v) for v in valores]
     if all(t in MESES_PT for t in textos):
         return True
+    # «2023-01», o formato mais comum em exportacoes de plataformas
+    if all(numero_do_mes(v) is not None and extrair_ano(v) is not None
+           for v in valores):
+        return True
     if all(re.fullmatch(r"t[1-4]|[1-4]\.?[ºo]?\s*trimestre", t) for t in textos):
         return True
     return False
@@ -1178,7 +1518,7 @@ def extrair_ano(valor):
         return int(como_numero(valor))
     if como_numero(valor) is not None:
         return None
-    encontrado = re.search(r"\b(19|20)\d{2}\b", str(valor))
+    encontrado = re.search(r"\b\d{4}\b", str(valor))
     return int(encontrado.group(0)) if encontrado else None
 
 
@@ -1321,8 +1661,8 @@ def secao_previsao(serie: pd.Series, pedido: int) -> tuple[str, str]:
         ))
 
     linhas = "; ".join(
-        f"{p['rotulo']} entre {formatar_numero(round(p['inferior']))} e "
-        f"{formatar_numero(round(p['superior']))}"
+        f"{p['rotulo']} entre {formatar_com_precisao(p['inferior'])} e "
+        f"{formatar_com_precisao(p['superior'])}"
         for p in resultado["previsoes"]
     )
 
@@ -1414,7 +1754,7 @@ def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, 
             leitura = "tendência estável"
         blocos.append(("Tendência", (
             f"Regressão linear com declive de {'+' if declive >= 0 else ''}"
-            f"{formatar_numero(round(declive, 2))} por período e R² de "
+            f"{formatar_com_precisao(declive)} por período e R² de "
             f"{formatar_numero(round(r2, 3))} — ajuste {ajuste} "
             f"({criterio(R2_AJUSTE_FRACO, R2_AJUSTE_FORTE, termos, sufixo='')}). "
             f"Leitura: {leitura}."
@@ -1435,7 +1775,14 @@ def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, 
         )))
 
     sazonal = indice_sazonal(serie)
-    if sazonal is None:
+    if sazonal is not None and "impossivel" in sazonal:
+        blocos.append(("Sazonalidade", (
+            "Não avaliada — o índice sazonal é uma razão entre a média de cada mês "
+            "e a média geral, e só tem significado quando todos os valores são "
+            "positivos. Esta série tem valores nulos ou negativos, e o índice daria "
+            "um número sem sentido."
+        )))
+    elif sazonal is None:
         blocos.append(("Sazonalidade", (
             f"Não avaliada — o índice sazonal precisa de pelo menos "
             f"{MIN_CICLOS_SAZONALIDADE} ciclos anuais completos de dados mensais, "
@@ -1598,15 +1945,15 @@ def acrescentar_tabela(documento, serie: pd.Series, grafico: dict,
 
 def executar(args) -> int:
     plano = ler_plano(Path(args.plano))
-    excel = abrir_excel(Path(args.dados))
+    fonte = abrir_dados(Path(args.dados))
 
     avisos: list[str] = []
-    notas: list[str] = []
+    notas: list[str] = list(fonte.notas)
     preparados = []
 
     for indice, grafico in enumerate(plano["graficos"], start=1):
         serie, n_linhas, temporal, anual = preparar_dados(
-            excel, grafico, indice, avisos, notas
+            fonte, grafico, indice, avisos, notas
         )
         preparados.append({
             "grafico": grafico, "serie": serie, "n_linhas": n_linhas,

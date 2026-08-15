@@ -118,7 +118,23 @@ testes/test_gerar_relatorio.py
   espalhados pelo código, e estão publicados no README.
 - As instruções são dadas em **linguagem natural**; o Claude escreve o
   `plano.json`. Não há formulário para o utilizador preencher.
-- Formatos de entrada: **só `.xlsx`**. CSV, `.xls` e `.xlsm` ficam de fora.
+- Formatos de entrada: **`.xlsx`, `.xlsm` e CSV** (decisão revista em 15/08/2026;
+  antes era só `.xlsx`). As exportações de plataformas são quase todas CSV, e é
+  esse o caso de uso real. O `.xls` antigo continua de fora: obrigaria ao `xlrd`.
+  Macros de `.xlsm` nunca são executadas.
+- **Num CSV é tudo texto.** Por isso lê-se com `dtype=str` e a conversão passa
+  toda pelo `converter_texto_formatado`, que só aceita o inequívoco. E por isso
+  «coluna guardada como texto» é **nota**, não aviso: um aviso que dispara em
+  todas as colunas de todos os ficheiros deixa de significar alguma coisa e
+  transforma o bloqueio em ruído.
+- **Datas em texto só viram eixo temporal com a convenção provada** (um dia
+  acima de 12 algures na coluna). Sem prova, ficam categóricas e o relatório
+  explica: falhar a análise é seguro, trocar Janeiro por Fevereiro não é.
+- **O índice sazonal é uma razão** e só corre com todos os valores positivos.
+  Descoberto com dados reais de anomalias de temperatura, que oscilam à volta de
+  zero e faziam o índice explodir.
+- **Formatar números com casas suficientes para dizerem algo** — um declive de
+  0,0005 arredondado a duas casas aparecia como «+0».
 - Tipos de gráfico: **`barras`, `linhas`, `circular`**. Não acrescentar mais sem
   pedido explícito.
 - Agregações: `soma`, `media`, `contagem`.

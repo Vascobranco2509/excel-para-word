@@ -1,6 +1,6 @@
 ---
 name: excel-para-word
-description: Transforma um ficheiro Excel (.xlsx) num relatório Word (.docx) com gráficos e uma análise estatística de cada um — dispersão, concentração, valores atípicos, tendência, sazonalidade, comparação ano a ano e previsão dos períodos seguintes. Usar quando alguém pede um relatório, gráficos, uma análise, uma evolução, uma previsão ou uma comparação entre anos a partir de uma folha de cálculo, ou fala em Excel, xlsx, folha de cálculo, relatório em Word ou docx.
+description: Transforma um ficheiro Excel ou CSV (.xlsx, .xlsm, .csv) num relatório Word (.docx) com gráficos e uma análise estatística de cada um — dispersão, concentração, valores atípicos, tendência, sazonalidade, comparação ano a ano e previsão dos períodos seguintes. Usar quando alguém pede um relatório, gráficos, uma análise, uma evolução, uma previsão ou uma comparação entre anos a partir de uma folha de cálculo, ou fala em Excel, xlsx, folha de cálculo, relatório em Word ou docx.
 ---
 
 # Excel para Word
@@ -48,10 +48,17 @@ anos, traz também os totais ano a ano e a variação interanual.
 
 ### 1. Inspecionar
 
-Ler o ficheiro antes de falar sobre ele:
+Ler o ficheiro antes de falar sobre ele. Para Excel (`.xlsx`, `.xlsm`):
 
 ```bash
 python -c "import pandas as pd; x=pd.ExcelFile('DADOS.xlsx'); print(x.sheet_names); [print(f, x.parse(f).dtypes, sep='\n') for f in x.sheet_names]"
+```
+
+Para CSV — ver as primeiras linhas em bruto **antes** de o interpretar, porque é
+aí que se vê o separador e as linhas de metadados por cima da tabela:
+
+```bash
+python -c "print(open('DADOS.csv', encoding='utf-8', errors='replace').read()[:600])"
 ```
 
 ### 2. Confirmar o pedido
@@ -138,7 +145,9 @@ está certo — é a guarda a funcionar, não uma falha.
 
 | Mensagem | Causa |
 |---|---|
-| «Só são suportados ficheiros .xlsx» | O ficheiro é `.xls`, `.xlsm` ou `.csv`. Gravar como `.xlsx`. |
+| «Não sei ler ficheiros …» | Suportados: `.xlsx`, `.xlsm`, `.csv`. O `.xls` antigo tem de ser gravado como `.xlsx`. |
+| «não diz de que folha ler» | O ficheiro tem várias folhas e o plano não indica `folha`. |
+| «mistura formatos de data incompatíveis» | Umas datas parecem dia/mês e outras mês/dia. |
 | «Não consigo ler … está aberto noutro programa» | O Excel de origem está aberto. Fechar. |
 | «não tem números» | A coluna escolhida para `eixo_y` é de texto. |
 | «tem campos que não existem» | O plano usa campos de uma versão antiga. Ver o README. |

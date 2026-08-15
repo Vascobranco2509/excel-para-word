@@ -17,7 +17,8 @@ plano, verifica os dados e gera o documento.
 
 **Faz:**
 
-- Lê `.xlsx`, com uma ou mais folhas.
+- Lê **`.xlsx`, `.xlsm` e CSV**. No CSV deteta sozinho o separador (`;` ou `,`) e a
+  codificação. Nos ficheiros Excel, aceita várias folhas.
 - Desenha gráficos de **barras**, **linhas** e **circular**.
 - Agrega por **soma**, **média** ou **contagem**.
 - Escreve, por baixo de cada gráfico, uma **análise estatística completa**: dispersão,
@@ -32,7 +33,7 @@ plano, verifica os dados e gera o documento.
 
 **Não faz, de propósito:**
 
-- Não lê CSV, `.xls` nem `.xlsm`.
+- Não lê `.xls`, o formato antigo do Excel.
 - Não escreve recomendações nem aponta causas.
   [A razão está aqui abaixo](#o-que-continua-de-fora-e-porquê).
 - **Não avalia desempenho** — nunca diz «bom», «fraco» ou «preocupante».
@@ -115,7 +116,7 @@ Esta é a referência única. O `SKILL.md` aponta para aqui e não a repete.
 | `titulo_relatorio` | sim | Título na primeira página do documento. |
 | `graficos` | sim | Lista de gráficos. Um gráfico por página. |
 | `tipo` | sim | `barras`, `linhas` ou `circular`. |
-| `folha` | sim | Nome da folha do Excel. |
+| `folha` | não | Nome da folha do Excel. Dispensável se o ficheiro tiver uma só folha, ou se for CSV. |
 | `eixo_x` | sim | Coluna que dá as categorias (meses, canais, regiões…). |
 | `eixo_y` | sim, exceto em `contagem` | Coluna com os números. |
 | `agregacao` | sim | `soma`, `media` ou `contagem`. |
@@ -160,6 +161,38 @@ poria Abril antes de Janeiro e daria uma série temporal errada.
 **O campo `nota` não aceita números.** Os números do relatório saem sempre dos
 dados. Se a nota pudesse ter números escritos à mão, bastava mudar o Excel e não
 refazer o plano para o texto passar a desmentir o gráfico ao lado.
+
+## Formatos de entrada
+
+| Formato | Notas |
+|---|---|
+| `.xlsx` | O caso normal. Várias folhas; indica-se qual com `folha`. |
+| `.xlsm` | Lido como o `.xlsx`. **As macros nunca são executadas** — só se leem os dados. |
+| `.csv`, `.tsv`, `.txt` | Separador detetado sozinho (`;`, `,`, tabulação). Codificação tentada por UTF-8, depois cp1252, depois latin-1 — a que funcionou fica registada nas notas. |
+| `.xls` | **Não suportado.** É o formato antigo do Excel e obrigaria a mais uma dependência. Abre-o e grava como `.xlsx`. |
+
+Num CSV não há folhas: o campo `folha` é ignorado se estiver no plano. Num Excel com uma
+só folha, também não é preciso indicá-la.
+
+**Exportações de plataformas** (Meta Ads, Google Ads, Analytics) costumam trazer duas ou
+três linhas de metadados antes da tabela. São detetadas e ignoradas, com aviso a dizer que
+linha foi usada como cabeçalho.
+
+### Datas em texto
+
+Uma coluna de datas em texto só é tratada como linha do tempo quando a convenção estiver
+**provada**:
+
+| O que lá está | O que acontece |
+|---|---|
+| `2026-01-31` (ISO) | Inequívoco. Aceite sempre. |
+| Algum dia acima de 12 (`31/01/2026`) | Prova que é dia/mês. Aplicado à coluna toda. |
+| Algum mês acima de 12 (`01/31/2026`) | Prova que é mês/dia. Aplicado à coluna toda. |
+| As duas coisas | Erro: a coluna mistura convenções. |
+| Nada prova (só dias ≤ 12) | Fica como categoria, **sem análise temporal**, e o relatório diz porquê. |
+
+O último caso é deliberado: falhar a análise é seguro, trocar Janeiro por Fevereiro não é.
+Um índice sazonal com os meses trocados estaria errado com ar de certo.
 
 ## A análise
 
@@ -281,6 +314,8 @@ O script analisa sempre os dados antes de gerar. Se encontrar algum destes casos
 **não gera nada** e explica porquê:
 
 - a tabela não começar na primeira linha da folha;
+- um gráfico de barras com mais de 40 categorias — as barras ficam finas como cabelos;
+- uma tabela de dados com mais de 30 categorias, que seria truncada;
 - uma categoria que parece ser a **linha de totais** da folha (`TOTAL`, `Soma`,
   `Total Geral`, ou a última categoria a valer exatamente a soma das outras) —
   se passasse, o gráfico contaria os mesmos valores duas vezes;
