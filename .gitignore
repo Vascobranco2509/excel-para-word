@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# relatorios gerados pelo utilizador; o do exemplo entra de proposito
+*.docx
+!exemplos/relatorio_exemplo.docx
+
+# ficheiros de bloqueio que o Excel cria enquanto tem o ficheiro aberto
+~$*.xlsx
+~$*.docx
+
+# conversoes feitas so para verificar o resultado
+*.pdf
+pagina-*.jpg
+pagina-*.png
+
+# notas de trabalho, com contexto pessoal
+plan.md

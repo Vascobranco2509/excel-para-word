@@ -1,0 +1,32 @@
+{
+  "titulo_relatorio": "Vendas 2025",
+  "graficos": [
+    {
+      "tipo": "barras",
+      "folha": "Vendas",
+      "eixo_x": "Mes",
+      "eixo_y": "Valor",
+      "agregacao": "soma",
+      "titulo": "Valor vendido por mês",
+      "tabela_dados": true
+    },
+    {
+      "tipo": "linhas",
+      "folha": "Vendas",
+      "eixo_x": "Mes",
+      "eixo_y": "Encomendas",
+      "agregacao": "soma",
+      "titulo": "Encomendas por mês",
+      "nota": "o pico do fim do ano coincide com a campanha de Natal"
+    },
+    {
+      "tipo": "circular",
+      "folha": "Vendas",
+      "eixo_x": "Canal",
+      "eixo_y": "Valor",
+      "agregacao": "soma",
+      "titulo": "Peso de cada canal no valor total",
+      "tabela_dados": true
+    }
+  ]
+}
