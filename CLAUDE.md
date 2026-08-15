@@ -110,8 +110,19 @@ testes/test_gerar_relatorio.py
 - Público-alvo do repositório: recrutadores e utilizadores de Excel. O README
   assume que se sabe abrir um terminal, e diz isso em vez de fingir o contrário.
 
+- **A tabela pode não começar na primeira linha.** O cabeçalho é detetado, mas
+  a deteção gera sempre um aviso — que bloqueia — a dizer que linha foi usada.
+  O campo `linha_cabecalho` fixa a escolha. Adivinhar em silêncio nunca.
+- **Linhas de totais** deixadas por sistemas de exportação são detetadas e
+  bloqueiam, porque contariam os valores duas vezes.
+- **Números gravados como texto** (`1.250,00 €`) são convertidos a partir da
+  célula em bruto, com a convenção deduzida da própria coluna. Quando nada a
+  prova, para com erro: o pandas lê o texto `1.250` como 1,25, e um palpite
+  errado dá um relatório mil vezes ao lado sem dar erro nenhum.
+- O `plano.json` é lido em `utf-8-sig`, para aceitar o BOM que o Bloco de Notas
+  e o PowerShell põem.
+
 ## 8. Fora de âmbito até alguém sentir a falta
 
-`barras_horizontais`, `area`, `dispersao`, deteção automática de cabeçalho,
-células combinadas, filtros por coluna, numeração de páginas, saída em PDF ou
-PowerPoint.
+`barras_horizontais`, `area`, `dispersao`, células combinadas, filtros por
+coluna, numeração de páginas, saída em PDF ou PowerPoint.

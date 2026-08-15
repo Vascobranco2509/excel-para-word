@@ -36,7 +36,10 @@ TIPOS_GRAFICO = ("barras", "linhas", "circular")
 AGREGACOES = ("soma", "media", "contagem")
 
 CHAVES_OBRIGATORIAS = ("tipo", "folha", "eixo_x", "agregacao", "titulo")
-CHAVES_OPCIONAIS = ("eixo_y", "nota", "tabela_dados")
+CHAVES_OPCIONAIS = ("eixo_y", "nota", "tabela_dados", "linha_cabecalho")
+
+# ate onde se procura o cabecalho quando a tabela nao comeca na primeira linha
+MAX_LINHAS_PROCURA_CABECALHO = 25
 
 MAX_LINHAS_TABELA = 30
 MAX_FATIAS_CIRCULAR = 12
@@ -164,8 +167,38 @@ def aplicar_formato(limpo: str, convencao: str) -> float | None:
         return None
 
 
+def detetar_linha_cabecalho(excel: pd.ExcelFile, folha: str) -> int:
+    """Descobre em que linha comeca a tabela. Devolve o indice, base 0.
+
+    Muita folha real tem o titulo do relatorio e a data de exportacao por
+    cima da tabela. Sem isto, o titulo era lido como cabecalho e as colunas
+    ficavam todas «Unnamed».
+
+    O cabecalho e a primeira linha com pelo menos duas celulas, todas de
+    texto, seguida de uma linha igualmente preenchida. Se nada servir,
+    devolve 0 -- o comportamento de sempre.
+    """
+    try:
+        amostra = excel.parse(folha, header=None,
+                              nrows=MAX_LINHAS_PROCURA_CABECALHO)
+    except Exception:
+        return 0
+
+    for indice in range(len(amostra) - 1):
+        linha = amostra.iloc[indice]
+        preenchidas = linha.dropna()
+        if len(preenchidas) < 2:
+            continue
+        if not all(isinstance(v, str) for v in preenchidas):
+            continue
+        seguinte = amostra.iloc[indice + 1].dropna()
+        if len(seguinte) >= len(preenchidas):
+            return indice
+    return 0
+
+
 def ler_coluna_bruta(excel: pd.ExcelFile, folha: str, nome: str,
-                     n_linhas: int) -> list | None:
+                     n_linhas: int, linha_cabecalho: int = 0) -> list | None:
     """Devolve os valores da coluna tal como estao gravados na celula.
 
     E preciso porque o pandas decide sozinho que o texto «1.250» vale 1,25.
@@ -175,16 +208,20 @@ def ler_coluna_bruta(excel: pd.ExcelFile, folha: str, nome: str,
     Devolve None se nao conseguir alinhar com o que o pandas leu, para o
     resto do programa seguir pelo caminho normal em vez de arriscar.
     """
+    primeira = linha_cabecalho + 1  # openpyxl conta as linhas a partir de 1
     try:
         folha_bruta = excel.book[folha]
-        cabecalhos = [c.value for c in next(folha_bruta.iter_rows(max_row=1))]
+        cabecalhos = [
+            c.value for c in next(folha_bruta.iter_rows(min_row=primeira,
+                                                        max_row=primeira))
+        ]
         indice = cabecalhos.index(nome)
     except (AttributeError, KeyError, StopIteration, ValueError):
         return None
 
     valores = [
         linha[indice].value if indice < len(linha) else None
-        for linha in folha_bruta.iter_rows(min_row=2)
+        for linha in folha_bruta.iter_rows(min_row=primeira + 1)
     ]
     # o pandas ignora linhas totalmente vazias no fim; so seguimos se bater certo
     while valores and valores[-1] is None and len(valores) > n_linhas:
@@ -286,7 +323,8 @@ def ler_plano(caminho: Path) -> dict:
     if not caminho.exists():
         raise ErroDados(f"O plano «{caminho}» não foi encontrado.")
     try:
-        texto = caminho.read_text(encoding="utf-8")
+        # utf-8-sig aceita o BOM que o Bloco de Notas e o PowerShell poem
+        texto = caminho.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         raise ErroDados(
             f"O plano «{caminho}» não está em UTF-8. Grava-o outra vez em UTF-8."
@@ -360,6 +398,14 @@ def validar_grafico(grafico, indice: int) -> None:
     if "tabela_dados" in grafico and not isinstance(grafico["tabela_dados"], bool):
         raise ErroDados(f"O campo «tabela_dados» do {onde} tem de ser true ou false.")
 
+    linha = grafico.get("linha_cabecalho")
+    if linha is not None:
+        if not isinstance(linha, int) or isinstance(linha, bool) or linha < 1:
+            raise ErroDados(
+                f"O campo «linha_cabecalho» do {onde} tem de ser o número da linha "
+                "do Excel onde estão os nomes das colunas (1, 2, 3…)."
+            )
+
 
 def abrir_excel(caminho: Path) -> pd.ExcelFile:
     if not caminho.exists():
@@ -400,7 +446,20 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
             f"Folhas disponíveis: {listar(excel.sheet_names)}."
         )
 
-    df = excel.parse(folha)
+    pedida = grafico.get("linha_cabecalho")
+    if pedida is None:
+        linha_cabecalho = detetar_linha_cabecalho(excel, folha)
+        if linha_cabecalho > 0:
+            acrescentar(avisos, (
+                f"A tabela da folha «{folha}» não começa na primeira linha. "
+                f"Usei a linha {linha_cabecalho + 1} como cabeçalho, e ignorei as "
+                f"{linha_cabecalho} de cima (costumam ser o título e a data de "
+                "exportação). Confirma que é essa a linha certa."
+            ))
+    else:
+        linha_cabecalho = pedida - 1  # o plano conta as linhas como o Excel
+
+    df = excel.parse(folha, header=linha_cabecalho)
     if df.empty:
         raise ErroDados(f"A folha «{folha}» não tem linhas nenhumas.")
 
@@ -428,7 +487,8 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
                 f"O {onde} pede a coluna «{eixo_y}», que não existe na folha «{folha}». "
                 f"Colunas disponíveis: {listar(df.columns)}."
             )
-        df = proteger_de_texto_reinterpretado(df, excel, folha, eixo_y, onde, avisos)
+        df = proteger_de_texto_reinterpretado(df, excel, folha, eixo_y, onde,
+                                              avisos, linha_cabecalho)
         df = converter_para_numero(df, eixo_y, folha, onde, avisos)
         colunas_necessarias = [eixo_x, eixo_y]
     else:
@@ -485,13 +545,14 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
 
 def proteger_de_texto_reinterpretado(df: pd.DataFrame, excel: pd.ExcelFile,
                                      folha: str, coluna: str, onde: str,
-                                     avisos: list[str]) -> pd.DataFrame:
+                                     avisos: list[str],
+                                     linha_cabecalho: int = 0) -> pd.DataFrame:
     """Reconverte a coluna a partir das celulas em bruto quando la havia texto.
 
     So faz alguma coisa se a coluna tiver mesmo celulas de texto com
     separadores ou simbolos de moeda. Numeros a serio nao passam por aqui.
     """
-    brutos = ler_coluna_bruta(excel, folha, coluna, len(df))
+    brutos = ler_coluna_bruta(excel, folha, coluna, len(df), linha_cabecalho)
     if brutos is None:
         return df
 

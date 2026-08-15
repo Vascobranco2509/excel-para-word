@@ -109,11 +109,19 @@ Esta é a referência única. O `SKILL.md` aponta para aqui e não a repete.
 | `titulo` | sim | Título do gráfico, no Word. Não entra na imagem. |
 | `nota` | não | Frase de enquadramento, **sem números**. Fica em itálico por baixo da descrição. |
 | `tabela_dados` | não | `true` acrescenta a tabela por baixo do gráfico. Acima de 30 categorias mostra as primeiras 30 e diz quantas ficaram de fora. |
+| `linha_cabecalho` | não | Número da linha do Excel onde estão os nomes das colunas. Só é preciso quando a deteção automática escolher a linha errada. |
 
 Qualquer campo que não esteja nesta tabela é recusado com erro. É de propósito:
 apanha planos escritos contra uma versão antiga.
 
 ### Duas decisões que valem a pena explicar
+
+**A tabela não tem de começar na primeira linha.** Se a folha tiver o título do
+relatório e a data de exportação por cima — como quase todas as folhas que saem
+de um sistema — o cabeçalho é encontrado sozinho. Mas nunca em silêncio: fica
+registado um aviso a dizer que linha foi usada, e o aviso bloqueia a geração até
+tu confirmares. Se a escolha estiver errada, indicas a linha certa com
+`linha_cabecalho`.
 
 **Números guardados como texto são convertidos, mas só quando é seguro.**
 `1.250,00 €` e `$1,250.00` são lidos corretamente, e a convenção é deduzida dos
@@ -136,6 +144,7 @@ refazer o plano para o texto passar a desmentir o gráfico ao lado.
 O script analisa sempre os dados antes de gerar. Se encontrar algum destes casos,
 **não gera nada** e explica porquê:
 
+- a tabela não começar na primeira linha da folha;
 - uma categoria que parece ser a **linha de totais** da folha (`TOTAL`, `Soma`,
   `Total Geral`, ou a última categoria a valer exatamente a soma das outras) —
   se passasse, o gráfico contaria os mesmos valores duas vezes;

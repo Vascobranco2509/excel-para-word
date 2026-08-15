@@ -334,6 +334,62 @@ def test_aviso_repetido_so_aparece_uma_vez(tmp_path):
     assert len(avisos) == len(set(avisos)), f"avisos repetidos: {avisos}"
 
 
+# --------------------------------------------------- cabecalho fora da linha 1
+# Folhas reais costumam ter o titulo do relatorio e a data de exportacao por
+# cima da tabela. Sem isto, o titulo virava cabecalho e as colunas ficavam
+# todas «Unnamed».
+
+
+def folha_com_titulo_por_cima(caminho: Path) -> Path:
+    from openpyxl import Workbook
+
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    livro = Workbook()
+    folha = livro.active
+    folha.title = "Vendas"
+    folha["A1"] = "Relatório de Campanhas — 1.º trimestre"
+    folha["A2"] = "Exportado em 31/03/2026"
+    folha.append([])
+    folha.append(["Mes", "Valor"])
+    for mes, valor in zip(MESES[:3], [10, 20, 35]):
+        folha.append([mes, valor])
+    livro.save(caminho)
+    return caminho
+
+
+def test_cabecalho_fora_da_primeira_linha_e_encontrado(tmp_path):
+    ficheiro = folha_com_titulo_por_cima(tmp_path / "titulo.xlsx")
+    serie, n_linhas, avisos, _ = preparar(ficheiro, grafico())
+
+    assert list(serie.index) == MESES[:3]
+    assert serie.sum() == 65
+    assert n_linhas == 3
+    assert any("não começa na primeira linha" in aviso for aviso in avisos)
+
+
+def test_linha_cabecalho_explicita_nao_gera_aviso(tmp_path):
+    ficheiro = folha_com_titulo_por_cima(tmp_path / "titulo.xlsx")
+    serie, _, avisos, _ = preparar(ficheiro, grafico(linha_cabecalho=4))
+
+    assert serie.sum() == 65
+    assert avisos == []
+
+
+def test_folha_normal_continua_a_usar_a_primeira_linha(tmp_path):
+    ficheiro = escrever_excel(
+        tmp_path / "normal.xlsx",
+        {"Mes": MESES[:3], "Valor": [10, 20, 35]},
+    )
+    serie, _, avisos, _ = preparar(ficheiro, grafico())
+    assert serie.sum() == 65
+    assert avisos == []
+
+
+def test_linha_cabecalho_invalida_e_recusada():
+    with pytest.raises(gr.ErroDados, match="linha_cabecalho"):
+        gr.validar_grafico(grafico(linha_cabecalho=0), 1)
+
+
 # ----------------------------------------------------------------- circular
 
 
@@ -417,6 +473,16 @@ def test_contagem_sem_eixo_y_conta_linhas(tmp_path):
     serie, _, _, _ = preparar(ficheiro, config)
     assert serie["Janeiro"] == 2
     assert serie["Fevereiro"] == 1
+
+
+def test_plano_com_bom_e_aceite(tmp_path):
+    """O Bloco de Notas e o PowerShell gravam UTF-8 com BOM. Nao e motivo para recusar."""
+    plano = tmp_path / "com_bom.json"
+    plano.write_text(
+        json.dumps({"titulo_relatorio": "x", "graficos": [grafico()]}, ensure_ascii=False),
+        encoding="utf-8-sig",
+    )
+    assert gr.ler_plano(plano)["titulo_relatorio"] == "x"
 
 
 def test_plano_com_json_invalido_diz_a_linha(tmp_path):
