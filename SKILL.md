@@ -1,13 +1,18 @@
 ---
 name: excel-para-word
-description: Transforma um ficheiro Excel (.xlsx) num relatório Word (.docx) com gráficos e uma descrição factual de cada um. Usar quando alguém pede um relatório, gráficos ou uma análise a partir de uma folha de cálculo, ou fala em Excel, xlsx, folha de cálculo, relatório em Word ou docx.
+description: Transforma um ficheiro Excel (.xlsx) num relatório Word (.docx) com gráficos e uma análise estatística de cada um — dispersão, concentração, valores atípicos, tendência, sazonalidade e comparação ano a ano. Usar quando alguém pede um relatório, gráficos, uma análise, uma evolução ou uma comparação entre anos a partir de uma folha de cálculo, ou fala em Excel, xlsx, folha de cálculo, relatório em Word ou docx.
 ---
 
 # Excel para Word
 
 Recebe um `.xlsx` e instruções em linguagem natural; devolve um `.docx` com um
-gráfico por página, cada um com título, descrição com números reais e,
-opcionalmente, a tabela de dados.
+gráfico por página, cada um com título, descrição com números reais, um bloco de
+análise estatística e, opcionalmente, a tabela de dados.
+
+O bloco **Análise** traz âmbito, amplitude, dispersão, concentração, valores
+atípicos e — quando o eixo é uma linha do tempo — evolução, tendência por
+regressão, crescimento médio e índice sazonal. Se os dados abrangerem vários
+anos, traz também os totais ano a ano e a variação interanual.
 
 ## Regras que não se negoceiam
 
@@ -19,9 +24,19 @@ opcionalmente, a tabela de dados.
    própria.
 4. **Nunca perguntar o que está dentro do ficheiro.** Colunas, folhas e número de
    linhas leem-se, não se perguntam.
-5. **Nunca escrever recomendações, causas, previsões ou juízos de valor** no
-   relatório. Só a descrição do que o gráfico mostra.
-6. **Nunca dar o trabalho por terminado sem ter verificado o `.docx` gerado.**
+5. **Nunca escrever recomendações, causas ou previsões** no relatório.
+6. **Nunca avaliar desempenho.** Nada de «bom», «mau», «fraco», «preocupante» ou
+   «excelente» — essas palavras exigem uma meta que o ficheiro Excel não contém,
+   e uma afirmação indefensável é pior do que um relatório curto.
+7. **Nenhuma palavra qualitativa sem uma regra calculada ao lado.** O relatório
+   escreve «tendência crescente», «dispersão elevada», «ajuste moderado» — sempre
+   com o número **e** o critério à frente. Quem lê pode discordar do critério;
+   não há opinião com que discordar. Os limiares estão no
+   [README](README.md#os-termos-qualitativos-e-a-regra-de-cada-um) e em constantes
+   no topo do script. Não inventar limiares novos no meio do código.
+8. **Nunca aplicar um método estatístico sem pontos que cheguem.** O script já
+   trava sozinho e escreve no relatório que não o aplicou, e porquê. Não contornar.
+9. **Nunca dar o trabalho por terminado sem ter verificado o `.docx` gerado.**
 
 ## Fluxo de trabalho
 
@@ -49,6 +64,17 @@ O campo `nota` é opcional e **não pode ter números**: serve para enquadrar
 («período da campanha de verão»). Os números do relatório são sempre calculados
 a partir dos dados.
 
+Três campos decidem a profundidade da análise, e vale a pena pensar neles antes
+de escrever o plano:
+
+- **`coluna_periodo`** — a coluna com as datas ou os anos. Sem ela **não há
+  quebra ano a ano**. Se o ficheiro abranger mais do que um ano, indicá-la.
+- **`eixo_temporal`** — só é preciso quando os rótulos são invulgares
+  (`Semana 1`, `P1`). Meses em português, trimestres, anos e datas são
+  reconhecidos sozinhos.
+- **`analise`**, ao nível do plano — `completa` por omissão. Só pôr `curta` se o
+  utilizador disser que quer apenas o gráfico.
+
 ### 4. Verificar — passo obrigatório
 
 ```bash
@@ -64,6 +90,9 @@ utilizador**. Depois **esperar pela resposta dele**. Exemplos de tradução:
 | coluna guardada como texto | «A coluna X está guardada como texto no Excel. Consegui ler os números, mas convém confirmar.» |
 | colunas sem cabeçalho | «A folha tem células soltas ao lado da tabela. Vou ignorá-las.» |
 | circular com muitas fatias | «Este gráfico circular ficaria com N fatias e não se leria. Sugiro barras.» |
+| parece ser linha de totais | «A folha tem uma linha TOTAL no fim. Se ficar, o gráfico conta os valores duas vezes. Quer que apague essa linha?» |
+| não começa na primeira linha | «A tabela começa na linha N, por causa do título por cima. Usei essa — está certo?» |
+| números gravados como texto | «Os valores estão como texto no Excel, com o símbolo de euro. Consegui lê-los, mas convém confirmar dois ou três.» |
 
 ### 5. Gerar
 
@@ -88,12 +117,23 @@ E olhar para as imagens das páginas. Sem LibreOffice instalado, extrair as
 imagens de dentro do `.docx` (que é um ZIP, com os gráficos em `word/media/`) e
 olhar para elas.
 
+**O `.docx` de saída não pode estar aberto no Word** enquanto se gera. Se estiver,
+o script diz isso e não escreve nada.
+
+Ao ler a análise, confirmar que **nenhum número foi inventado** e que cada termo
+qualitativo aparece com o critério ao lado. Se algum método disser que não correu,
+está certo — é a guarda a funcionar, não uma falha.
+
 ## Erros mais comuns e o que significam
 
 | Mensagem | Causa |
 |---|---|
 | «Só são suportados ficheiros .xlsx» | O ficheiro é `.xls`, `.xlsm` ou `.csv`. Gravar como `.xlsx`. |
-| «está aberto noutro programa» | O Excel tem o ficheiro aberto. Fechar. |
+| «Não consigo ler … está aberto noutro programa» | O Excel de origem está aberto. Fechar. |
 | «não tem números» | A coluna escolhida para `eixo_y` é de texto. |
 | «tem campos que não existem» | O plano usa campos de uma versão antiga. Ver o README. |
 | «há valores negativos» | Um gráfico circular não pode ter fatias negativas. Usar barras. |
+| «Não consigo escrever … está aberto noutro programa» | O `.docx` de saída está aberto no Word. Fechar. |
+| «formato ambíguo» | Números como texto em `1.250`, sem nada a provar se é mil duzentos e cinquenta ou um vírgula vinte e cinco. Formatar a coluna como número no Excel. |
+| «parece(m) ser linha(s) de totais» | A folha tem uma linha `TOTAL` no fim, que contaria os valores duas vezes. |
+| «não começa na primeira linha» | A folha tem título por cima da tabela; confirmar a linha escolhida ou indicar `linha_cabecalho`. |
