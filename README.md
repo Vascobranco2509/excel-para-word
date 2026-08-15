@@ -128,6 +128,9 @@ refazer o plano para o texto passar a desmentir o gráfico ao lado.
 O script analisa sempre os dados antes de gerar. Se encontrar algum destes casos,
 **não gera nada** e explica porquê:
 
+- uma categoria que parece ser a **linha de totais** da folha (`TOTAL`, `Soma`,
+  `Total Geral`, ou a última categoria a valer exatamente a soma das outras) —
+  se passasse, o gráfico contaria os mesmos valores duas vezes;
 - linhas com células vazias nas colunas usadas;
 - coluna numérica guardada como texto no Excel;
 - colunas sem cabeçalho na folha (células soltas ao lado da tabela);

@@ -168,6 +168,59 @@ def test_colunas_fantasma_geram_aviso(tmp_path):
     assert any("sem cabeçalho" in aviso for aviso in avisos)
 
 
+# -------------------------------------------------------- linhas de totais
+# Encontrados num teste com um ficheiro de exportacao a serio: a linha TOTAL
+# do fim da folha virava uma categoria e o relatorio contava tudo duas vezes,
+# sem avisar.
+
+
+def test_linha_total_no_fim_da_folha_e_apanhada(tmp_path):
+    ficheiro = escrever_excel(
+        tmp_path / "com_total.xlsx",
+        {"Campanha": ["Inverno", "Primavera", "Verao", "TOTAL"],
+         "Valor": [100, 200, 300, 600]},
+    )
+    _, _, avisos, _ = preparar(ficheiro, grafico(eixo_x="Campanha"))
+    assert any("totais" in aviso for aviso in avisos)
+
+
+def test_total_com_acentos_e_maiusculas_tambem_e_apanhado(tmp_path):
+    ficheiro = escrever_excel(
+        tmp_path / "totais.xlsx",
+        {"Campanha": ["Inverno", "Primavera", "Total Geral"],
+         "Valor": [100, 200, 300]},
+    )
+    _, _, avisos, _ = preparar(ficheiro, grafico(eixo_x="Campanha"))
+    assert any("totais" in aviso for aviso in avisos)
+
+
+def test_dados_legitimos_nao_sao_confundidos_com_totais(tmp_path):
+    """10, 20 e 30 sao dados a serio: o 30 e a soma dos outros por acaso."""
+    ficheiro = escrever_excel(
+        tmp_path / "legitimo.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro", "Marco"], "Valor": [10, 20, 30]},
+    )
+    _, _, avisos, _ = preparar(ficheiro, grafico())
+    assert avisos == []
+
+
+def test_aviso_repetido_so_aparece_uma_vez(tmp_path):
+    """Dois graficos sobre a mesma folha suja davam o mesmo aviso duas vezes."""
+    ficheiro = escrever_excel(
+        tmp_path / "suja.xlsx",
+        {"Mes": ["Janeiro", "Fevereiro", "Marco"],
+         "Valor": [10, None, 30],
+         "Cliques": [1, 2, 3]},
+    )
+    avisos: list[str] = []
+    notas: list[str] = []
+    excel = gr.abrir_excel(ficheiro)
+    gr.preparar_dados(excel, grafico(), 1, avisos, notas)
+    gr.preparar_dados(excel, grafico(titulo="Outro"), 2, avisos, notas)
+
+    assert len(avisos) == len(set(avisos)), f"avisos repetidos: {avisos}"
+
+
 # ----------------------------------------------------------------- circular
 
 

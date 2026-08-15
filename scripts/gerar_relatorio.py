@@ -17,6 +17,7 @@ import json
 import shutil
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 import matplotlib
@@ -38,6 +39,9 @@ CHAVES_OPCIONAIS = ("eixo_y", "nota", "tabela_dados")
 
 MAX_LINHAS_TABELA = 30
 MAX_FATIAS_CIRCULAR = 12
+
+# rotulos que denunciam uma linha de totais deixada por um sistema de exportacao
+ROTULOS_DE_TOTAL = frozenset({"total", "totais", "total geral", "subtotal", "soma", "sum"})
 LARGURA_IMAGEM = Inches(6.0)
 
 # tamanhos pensados para a figura ja encolhida dentro da pagina do Word
@@ -92,6 +96,59 @@ def formatar_categoria(valor) -> str:
 
 def listar(itens) -> str:
     return ", ".join(f"«{item}»" for item in itens)
+
+
+def acrescentar(avisos: list[str], mensagem: str) -> None:
+    """Junta um aviso so uma vez.
+
+    Varios graficos leem a mesma folha; sem isto o mesmo aviso sairia
+    repetido uma vez por grafico.
+    """
+    if mensagem not in avisos:
+        avisos.append(mensagem)
+
+
+def normalizar(texto) -> str:
+    """Minusculas e sem acentos, para comparar rotulos."""
+    sem_acentos = unicodedata.normalize("NFKD", str(texto))
+    return "".join(c for c in sem_acentos if not unicodedata.combining(c)).strip().lower()
+
+
+def detetar_linha_de_total(serie: pd.Series, grafico: dict,
+                           avisos: list[str]) -> None:
+    """Avisa quando uma categoria parece ser a linha de totais da folha.
+
+    Exportacoes de sistemas costumam deixar uma linha TOTAL no fim. Sem
+    isto, essa linha vira uma categoria e o relatorio conta tudo duas
+    vezes -- em silencio, que e o pior dos casos.
+
+    Nao se apaga nada: avisa-se, e o aviso bloqueia a geracao ate haver
+    uma decisao humana.
+    """
+    if len(serie) < 2:
+        return
+
+    suspeitas = [c for c in serie.index if normalizar(c) in ROTULOS_DE_TOTAL]
+
+    # Sinal independente do nome: a ultima categoria vale a soma das outras.
+    # So a partir de 5 categorias, e so na ultima. Com poucas categorias isto
+    # acontece por acaso -- 10, 20 e 30 sao dados legitimos, e o 30 e a soma
+    # dos outros dois. Linhas de totais ficam no fim da folha, nao no meio.
+    if len(serie) >= 5:
+        ultima = serie.index[-1]
+        valor = float(serie.iloc[-1])
+        resto = float(serie.sum()) - valor
+        if resto > 0 and abs(valor - resto) <= abs(resto) * 1e-6:
+            if ultima not in suspeitas:
+                suspeitas.append(ultima)
+
+    if suspeitas:
+        acrescentar(avisos, (
+            f"{grafico['titulo']}: {listar(suspeitas)} parece(m) ser linha(s) de "
+            "totais da folha, e não categorias. Se ficarem, o gráfico conta os "
+            "mesmos valores duas vezes. Apaga essa linha do Excel, ou confirma "
+            "que é mesmo uma categoria."
+        ))
 
 
 # ------------------------------------------------------------------- leitura
@@ -221,11 +278,11 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
 
     fantasma = [c for c in df.columns if str(c).startswith("Unnamed:")]
     if fantasma:
-        avisos.append(
+        acrescentar(avisos, (
             f"A folha «{folha}» tem {len(fantasma)} coluna(s) sem cabeçalho "
             f"({listar(fantasma)}). Costuma ser sinal de células soltas ao lado "
             "da tabela. Foram ignoradas."
-        )
+        ))
 
     eixo_x = grafico["eixo_x"]
     if eixo_x not in df.columns:
@@ -252,10 +309,10 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
     df = df.dropna(subset=colunas_necessarias)
     ignoradas = antes - len(df)
     if ignoradas:
-        avisos.append(
+        acrescentar(avisos, (
             f"{ignoradas} linha(s) da folha «{folha}» foram ignoradas por terem "
             f"células vazias em {listar(colunas_necessarias)}."
-        )
+        ))
     if df.empty:
         raise ErroDados(
             f"Depois de ignorar as linhas com células vazias, o {onde} ficou sem dados."
@@ -269,6 +326,8 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
 
     if serie.empty:
         raise ErroDados(f"O {onde} não produziu nenhuma categoria depois de agrupar.")
+
+    detetar_linha_de_total(serie, grafico, avisos)
 
     if len(df) > len(serie):
         notas.append(
@@ -286,11 +345,11 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
         if (serie == 0).all():
             raise ErroDados(f"O {onde} é circular e todos os valores são zero.")
         if len(serie) > MAX_FATIAS_CIRCULAR:
-            avisos.append(
+            acrescentar(avisos, (
                 f"{grafico['titulo']}: o gráfico circular ficaria com {len(serie)} "
                 f"fatias. Acima de {MAX_FATIAS_CIRCULAR} deixa de se ler. "
                 "Considera barras, ou agrupar as categorias mais pequenas."
-            )
+            ))
 
     return serie, len(df)
 
@@ -329,7 +388,7 @@ def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
             f" {perdidas} célula(s) não eram números e foram ignoradas "
             f"(exemplos: {listar(exemplos)})."
         )
-    avisos.append(mensagem)
+    acrescentar(avisos, mensagem)
 
     df = df.copy()
     df[coluna] = convertida
