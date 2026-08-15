@@ -36,7 +36,8 @@ TIPOS_GRAFICO = ("barras", "linhas", "circular")
 AGREGACOES = ("soma", "media", "contagem")
 
 CHAVES_OBRIGATORIAS = ("tipo", "folha", "eixo_x", "agregacao", "titulo")
-CHAVES_OPCIONAIS = ("eixo_y", "nota", "tabela_dados", "linha_cabecalho")
+CHAVES_OPCIONAIS = ("eixo_y", "nota", "tabela_dados", "linha_cabecalho",
+                    "coluna_periodo", "eixo_temporal")
 
 # ate onde se procura o cabecalho quando a tabela nao comeca na primeira linha
 MAX_LINHAS_PROCURA_CABECALHO = 25
@@ -49,6 +50,28 @@ ROTULOS_DE_TOTAL = frozenset({"total", "totais", "total geral", "subtotal", "som
 
 # simbolos a ignorar quando os numeros vem gravados como texto
 SIMBOLOS_MOEDA = ("€", "$", "£", "¥", "R$", "EUR", "USD")
+
+# Minimos para cada metodo. Aplicar uma regressao a tres pontos faz um relatorio
+# PARECER serio sendo falso; por isso, abaixo destes numeros o metodo nao corre e
+# o relatorio diz que nao correu e porque.
+MIN_PERIODOS_REGRESSAO = 4
+MIN_PERIODOS_CRESCIMENTO = 3
+MIN_CATEGORIAS_ATIPICOS = 5
+MIN_CICLOS_SAZONALIDADE = 2
+
+# Limiares dos termos qualitativos. Cada um aparece no relatorio com o numero E o
+# criterio ao lado: nenhuma palavra qualitativa entra sem regra a sustenta-la.
+CV_DISPERSAO_BAIXA = 15.0
+CV_DISPERSAO_ELEVADA = 35.0
+R2_AJUSTE_FRACO = 0.3
+R2_AJUSTE_FORTE = 0.7
+PESO_CONCENTRACAO_BAIXA = 25.0
+PESO_CONCENTRACAO_ELEVADA = 50.0
+
+MESES_PT = (
+    "janeiro", "fevereiro", "marco", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+)
 LARGURA_IMAGEM = Inches(6.0)
 
 # tamanhos pensados para a figura ja encolhida dentro da pagina do Word
@@ -83,6 +106,8 @@ def formatar_numero(valor) -> str:
     if abs(numero - round(numero)) < 1e-9:
         return f"{int(round(numero)):,}".replace(",", ".")
     texto = f"{numero:,.2f}"
+    if texto.endswith("0"):
+        texto = texto[:-1]  # 56,20% le-se mal; 56,2% le-se bem
     # troca os separadores anglo-saxonicos pelos portugueses
     return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
@@ -346,6 +371,20 @@ def ler_plano(caminho: Path) -> dict:
     if not isinstance(graficos, list) or not graficos:
         raise ErroDados("Falta «graficos» no plano, ou a lista está vazia.")
 
+    analise = plano.get("analise", "completa")
+    if analise not in ("completa", "curta"):
+        raise ErroDados(
+            f"O campo «analise» do plano é «{analise}», que não existe. "
+            "Só há «completa» (por omissão) e «curta»."
+        )
+
+    desconhecidas = sorted(set(plano) - {"titulo_relatorio", "graficos", "analise"})
+    if desconhecidas:
+        raise ErroDados(
+            f"O plano tem campos que não existem: {listar(desconhecidas)}. "
+            "Campos aceites: «titulo_relatorio», «graficos», «analise»."
+        )
+
     for indice, grafico in enumerate(graficos, start=1):
         validar_grafico(grafico, indice)
     return plano
@@ -397,6 +436,16 @@ def validar_grafico(grafico, indice: int) -> None:
 
     if "tabela_dados" in grafico and not isinstance(grafico["tabela_dados"], bool):
         raise ErroDados(f"O campo «tabela_dados» do {onde} tem de ser true ou false.")
+
+    if "eixo_temporal" in grafico and not isinstance(grafico["eixo_temporal"], bool):
+        raise ErroDados(f"O campo «eixo_temporal» do {onde} tem de ser true ou false.")
+
+    periodo = grafico.get("coluna_periodo")
+    if periodo is not None and (not isinstance(periodo, str) or not periodo.strip()):
+        raise ErroDados(
+            f"O campo «coluna_periodo» do {onde} tem de ser o nome da coluna com "
+            "as datas ou os anos."
+        )
 
     linha = grafico.get("linha_cabecalho")
     if linha is not None:
@@ -518,6 +567,14 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
 
     detetar_linha_de_total(serie, grafico, avisos)
 
+    temporal = grafico.get("eixo_temporal")
+    if temporal is None:
+        temporal = parece_temporal(serie.index)
+    if temporal:
+        notas.append(f"{grafico['titulo']}: «{eixo_x}» tratado como linha do tempo.")
+
+    serie_anual = calcular_serie_anual(df, grafico, eixo_x, eixo_y, folha, avisos)
+
     if len(df) > len(serie):
         notas.append(
             f"{grafico['titulo']}: {len(df)} linhas agrupadas em {len(serie)} "
@@ -540,7 +597,41 @@ def preparar_dados(excel: pd.ExcelFile, grafico: dict, indice: int,
                 "Considera barras, ou agrupar as categorias mais pequenas."
             ))
 
-    return serie, len(df)
+    return serie, len(df), bool(temporal), serie_anual
+
+
+def calcular_serie_anual(df: pd.DataFrame, grafico: dict, eixo_x: str,
+                         eixo_y: str | None, folha: str,
+                         avisos: list[str]) -> pd.Series | None:
+    """Agrega por ano, para a analise ano a ano.
+
+    A coluna dos anos e a indicada em «coluna_periodo»; se nao houver, tenta o
+    proprio eixo_x. Devolve None quando nao ha anos para tirar dali.
+    """
+    coluna = grafico.get("coluna_periodo") or eixo_x
+    if coluna not in df.columns:
+        raise ErroDados(
+            f"O gráfico «{grafico['titulo']}» pede «{coluna}» como coluna de "
+            f"períodos, mas essa coluna não existe na folha «{folha}». "
+            f"Colunas disponíveis: {listar(df.columns)}."
+        )
+
+    anos = df[coluna].map(extrair_ano)
+    if anos.isna().all():
+        if grafico.get("coluna_periodo"):
+            acrescentar(avisos, (
+                f"Não consegui tirar anos da coluna «{coluna}» da folha «{folha}». "
+                "A análise ano a ano ficou de fora deste gráfico."
+            ))
+        return None
+
+    trabalho = df.assign(_ano=anos).dropna(subset=["_ano"])
+    if eixo_y is None:
+        return trabalho.groupby("_ano", sort=True).size()
+
+    grupo = trabalho.groupby("_ano", sort=True)[eixo_y]
+    agregacao = grafico["agregacao"]
+    return {"soma": grupo.sum, "media": grupo.mean, "contagem": grupo.count}[agregacao]()
 
 
 def proteger_de_texto_reinterpretado(df: pd.DataFrame, excel: pd.ExcelFile,
@@ -675,13 +766,28 @@ def desenhar(serie: pd.Series, grafico: dict, destino: Path) -> None:
     plt.close(figura)
 
 
+MAX_ROTULOS_LEGIVEIS = 15
+
+
 def rodar_rotulos(eixos, rotulos: list[str]) -> None:
-    """Roda os rotulos do eixo x quando sao muitos ou compridos."""
+    """Roda os rotulos do eixo x, e desbasta-os quando sao demasiados.
+
+    Com 36 periodos os rotulos sobrepoem-se e o eixo fica ilegivel. Mostra-se
+    um em cada N; os pontos ficam todos no grafico, so os rotulos e que
+    espacam.
+    """
     mais_comprido = max((len(r) for r in rotulos), default=0)
     if len(rotulos) > 8 or mais_comprido > 6:
         for rotulo in eixos.get_xticklabels():
             rotulo.set_rotation(45)
             rotulo.set_horizontalalignment("right")
+
+    if len(rotulos) > MAX_ROTULOS_LEGIVEIS:
+        passo = -(-len(rotulos) // MAX_ROTULOS_LEGIVEIS)  # divisao a arredondar para cima
+        posicoes = list(range(0, len(rotulos), passo))
+        eixos.set_xticks(posicoes)
+        eixos.set_xticklabels([rotulos[i] for i in posicoes],
+                              rotation=45, horizontalalignment="right")
 
 
 # ------------------------------------------------------------------- texto
@@ -733,6 +839,409 @@ def frase_descritiva(serie: pd.Series, grafico: dict, n_linhas: int) -> str:
     return " ".join(partes)
 
 
+# -------------------------------------------------------------- estatistica
+# Tudo daqui para baixo trabalha so com listas de numeros, sem dependencias
+# novas. Sao funcoes puras de proposito: da para as bater contra uma conta
+# feita a parte, que e a unica maneira de verificar estatistica -- um R2
+# errado nao se ve a olho como se ve um grafico partido.
+
+
+def regressao_linear(valores: list[float]) -> tuple[float, float] | None:
+    """Minimos quadrados sobre 0, 1, 2... Devolve (declive, r2).
+
+    None quando ha poucos pontos para a reta significar alguma coisa.
+    """
+    n = len(valores)
+    if n < MIN_PERIODOS_REGRESSAO:
+        return None
+
+    xs = list(range(n))
+    media_x = sum(xs) / n
+    media_y = sum(valores) / n
+    soma_xy = sum((x - media_x) * (y - media_y) for x, y in zip(xs, valores))
+    soma_xx = sum((x - media_x) ** 2 for x in xs)
+    if soma_xx == 0:
+        return None
+
+    declive = soma_xy / soma_xx
+    intercecao = media_y - declive * media_x
+    variacao_total = sum((y - media_y) ** 2 for y in valores)
+    if variacao_total == 0:
+        return declive, 1.0
+    residuos = sum((y - (declive * x + intercecao)) ** 2 for x, y in zip(xs, valores))
+    return declive, 1 - residuos / variacao_total
+
+
+def crescimento_medio(valores: list[float]) -> float | None:
+    """Taxa geometrica media por periodo, em percentagem.
+
+    Exige valores todos positivos: com um zero pelo meio a raiz nao existe,
+    e com negativos o resultado nao quer dizer nada.
+    """
+    if len(valores) < MIN_PERIODOS_CRESCIMENTO:
+        return None
+    if any(v <= 0 for v in valores):
+        return None
+    return ((valores[-1] / valores[0]) ** (1 / (len(valores) - 1)) - 1) * 100
+
+
+def detetar_atipicos(serie: pd.Series) -> list | None:
+    """Valores fora de 1,5 vezes o intervalo interquartil (metodo de Tukey)."""
+    if len(serie) < MIN_CATEGORIAS_ATIPICOS:
+        return None
+    q1 = float(serie.quantile(0.25))
+    q3 = float(serie.quantile(0.75))
+    intervalo = q3 - q1
+    if intervalo == 0:
+        return []
+    minimo = q1 - 1.5 * intervalo
+    maximo = q3 + 1.5 * intervalo
+    return [(c, float(v)) for c, v in serie.items() if v < minimo or v > maximo]
+
+
+def numero_do_mes(rotulo) -> int | None:
+    """Tira o numero do mes de «2025-03», de «Marco» ou de uma data."""
+    if isinstance(rotulo, pd.Timestamp):
+        return int(rotulo.month)
+    texto = normalizar(rotulo)
+    if texto in MESES_PT:
+        # "marco" e "março" sao o mesmo mes; a lista tem os dois
+        ordem = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho",
+                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+        return ordem.index(texto.replace("ç", "c")) + 1
+    encontrado = re.fullmatch(r"(19|20)\d{2}[-/](\d{1,2})", texto)
+    if encontrado:
+        mes = int(encontrado.group(2))
+        return mes if 1 <= mes <= 12 else None
+    return None
+
+
+def indice_sazonal(serie: pd.Series) -> dict | None:
+    """Indice sazonal classico: media de cada mes a dividir pela media geral.
+
+    Um indice de 1,4 quer dizer que aquele mes vale, em media, 40% acima do
+    mes tipico. Devolve None quando nao ha ciclos completos que cheguem --
+    dois anos de dados mensais e o minimo para a media de cada mes significar
+    alguma coisa.
+    """
+    meses = [numero_do_mes(rotulo) for rotulo in serie.index]
+    if any(m is None for m in meses):
+        return None
+
+    anos = {extrair_ano(rotulo) for rotulo in serie.index}
+    anos.discard(None)
+    if len(anos) < MIN_CICLOS_SAZONALIDADE or len(serie) < 12 * MIN_CICLOS_SAZONALIDADE:
+        return None
+
+    media_geral = float(serie.mean())
+    if media_geral == 0:
+        return None
+
+    por_mes: dict[int, list[float]] = {}
+    for mes, valor in zip(meses, serie.values):
+        por_mes.setdefault(mes, []).append(float(valor))
+
+    indices = {m: (sum(vs) / len(vs)) / media_geral for m, vs in por_mes.items()}
+    return {"indices": indices, "ciclos": len(anos)}
+
+
+def classificar(valor: float, baixo: float, alto: float,
+                termos: tuple[str, str, str]) -> str:
+    if valor < baixo:
+        return termos[0]
+    if valor <= alto:
+        return termos[1]
+    return termos[2]
+
+
+def criterio(baixo: float, alto: float, termos: tuple[str, str, str],
+             sufixo: str = "%") -> str:
+    return (f"critério: <{formatar_numero(baixo)}{sufixo} {termos[0]}, "
+            f"{formatar_numero(baixo)}–{formatar_numero(alto)}{sufixo} {termos[1]}, "
+            f">{formatar_numero(alto)}{sufixo} {termos[2]}")
+
+
+# ------------------------------------------------------------ eixo temporal
+
+
+def parece_temporal(indice) -> bool:
+    """Diz se os rotulos do eixo x sao uma linha do tempo.
+
+    Na duvida devolve False. E a hipotese segura: perde-se analise, nao se
+    ganham numeros errados. Uma regressao sobre «Canal» mudaria de declive
+    so por trocar duas colunas no Excel.
+    """
+    valores = [v for v in indice if v is not None]
+    if not valores:
+        return False
+
+    if all(isinstance(v, pd.Timestamp) for v in valores):
+        return True
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool)
+           and float(v).is_integer() and 1900 <= v <= 2100 for v in valores):
+        return True
+
+    textos = [normalizar(v) for v in valores]
+    if all(t in MESES_PT for t in textos):
+        return True
+    if all(re.fullmatch(r"t[1-4]|[1-4]\.?[ºo]?\s*trimestre", t) for t in textos):
+        return True
+    return False
+
+
+def extrair_ano(valor):
+    """Tira o ano de uma data, de um numero ou de um texto.
+
+    O ano nao sofre da ambiguidade dd/mm contra mm/dd: em «01/02/2026» o ano
+    e o mesmo nas duas leituras. Por isso a quebra por ano e segura mesmo
+    quando a ordem do dia e do mes nao esta provada.
+    """
+    if isinstance(valor, pd.Timestamp):
+        return int(valor.year)
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        if float(valor).is_integer() and 1900 <= valor <= 2100:
+            return int(valor)
+        return None
+    encontrado = re.search(r"\b(19|20)\d{2}\b", str(valor))
+    return int(encontrado.group(0)) if encontrado else None
+
+
+# ------------------------------------------------------------------ analise
+
+
+def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
+                   temporal: bool, serie_anual: pd.Series | None
+                   ) -> list[tuple[str, str]]:
+    """Constroi o bloco de analise como pares (etiqueta, texto).
+
+    Regra unica deste bloco: nenhuma palavra qualitativa entra sem uma regra
+    calculada, e a regra vai escrita ao lado. Nunca «bom» ou «fraco» -- isso
+    exigiria uma meta que o ficheiro Excel nao tem.
+    """
+    blocos: list[tuple[str, str]] = []
+    valores = [float(v) for v in serie.values]
+    total = sum(valores)
+    media = total / len(valores)
+
+    blocos.append(("Âmbito", (
+        f"{formatar_numero(len(serie))} categorias de «{grafico['eixo_x']}», "
+        f"a partir de {formatar_numero(n_linhas)} linhas. "
+        f"Total {formatar_numero(total)}; média {formatar_numero(media)}; "
+        f"mediana {formatar_numero(float(serie.median()))}."
+    )))
+
+    blocos.append(("Amplitude", (
+        f"Máximo {formatar_numero(serie.max())} em «{formatar_categoria(serie.idxmax())}»; "
+        f"mínimo {formatar_numero(serie.min())} em «{formatar_categoria(serie.idxmin())}». "
+        f"Amplitude {formatar_numero(float(serie.max()) - float(serie.min()))}"
+        + (f"; rácio de {formatar_numero(round(float(serie.max()) / float(serie.min()), 2))}."
+           if float(serie.min()) > 0 else " (o mínimo é zero ou negativo, logo sem rácio).")
+    )))
+
+    if len(serie) > 1 and media != 0:
+        desvio = float(serie.std(ddof=1))
+        cv = abs(desvio / media) * 100
+        termos = ("baixa", "moderada", "elevada")
+        blocos.append(("Dispersão", (
+            f"Desvio-padrão {formatar_numero(desvio)}; coeficiente de variação "
+            f"{formatar_numero(round(cv, 1))}% — dispersão "
+            f"{classificar(cv, CV_DISPERSAO_BAIXA, CV_DISPERSAO_ELEVADA, termos)} "
+            f"({criterio(CV_DISPERSAO_BAIXA, CV_DISPERSAO_ELEVADA, termos)})."
+        )))
+
+    if total > 0 and all(v >= 0 for v in valores):
+        ordenados = sorted(valores, reverse=True)
+        peso_maior = ordenados[0] / total * 100
+        termos = ("baixa", "moderada", "elevada")
+        texto = (
+            f"A maior categoria representa {formatar_numero(round(peso_maior, 1))}% do "
+            f"total — concentração "
+            f"{classificar(peso_maior, PESO_CONCENTRACAO_BAIXA, PESO_CONCENTRACAO_ELEVADA, termos)} "
+            f"({criterio(PESO_CONCENTRACAO_BAIXA, PESO_CONCENTRACAO_ELEVADA, termos)})."
+        )
+        if len(serie) > 3:
+            peso_tres = sum(ordenados[:3]) / total * 100
+            texto += f" As três maiores valem {formatar_numero(round(peso_tres, 1))}%."
+        blocos.append(("Concentração", texto))
+
+    atipicos = detetar_atipicos(serie)
+    if atipicos is None:
+        blocos.append(("Valores atípicos", (
+            f"Não avaliados — o método de Tukey (1,5×IQR) precisa de pelo menos "
+            f"{MIN_CATEGORIAS_ATIPICOS} categorias e há {formatar_numero(len(serie))}."
+        )))
+    elif atipicos:
+        lista = "; ".join(
+            f"«{formatar_categoria(c)}» ({formatar_numero(v)})" for c, v in atipicos
+        )
+        quantos = ("1 valor" if len(atipicos) == 1
+                   else f"{formatar_numero(len(atipicos))} valores")
+        blocos.append(("Valores atípicos", (
+            f"{quantos} fora do intervalo interquartil alargado "
+            f"(método de Tukey, 1,5×IQR): {lista}."
+        )))
+    else:
+        blocos.append(("Valores atípicos", (
+            "Nenhuma categoria fora do intervalo interquartil alargado "
+            "(método de Tukey, 1,5×IQR)."
+        )))
+
+    if temporal:
+        blocos.extend(analise_temporal(serie, valores))
+    else:
+        blocos.append(("Evolução", (
+            f"Não analisada — «{grafico['eixo_x']}» é um eixo categórico, não uma "
+            "linha do tempo. Tendências e regressões só têm significado quando a "
+            "ordem das categorias é a ordem do tempo."
+        )))
+
+    if serie_anual is not None and len(serie_anual) >= 2:
+        blocos.extend(analise_anual(serie_anual))
+
+    return blocos
+
+
+def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, str]]:
+    """Secoes que so fazem sentido quando o eixo e uma linha do tempo."""
+    blocos = []
+    primeiro, ultimo = valores[0], valores[-1]
+    variacao = ultimo - primeiro
+    texto = (
+        f"Do primeiro ao último período: {'+' if variacao >= 0 else ''}"
+        f"{formatar_numero(variacao)}"
+    )
+    if primeiro != 0:
+        texto += f" ({'+' if variacao >= 0 else ''}{formatar_numero(round(variacao / abs(primeiro) * 100, 1))}%)"
+    texto += "."
+
+    diferencas = [b - a for a, b in zip(valores, valores[1:])]
+    subidas = sum(1 for d in diferencas if d > 0)
+    descidas = sum(1 for d in diferencas if d < 0)
+    texto += (
+        f" Das {formatar_numero(len(diferencas))} variações período a período, "
+        f"{formatar_numero(subidas)} positivas e {formatar_numero(descidas)} negativas"
+    )
+    if diferencas and (subidas == len(diferencas) or descidas == len(diferencas)):
+        texto += " — série monótona."
+    else:
+        texto += " — série não monótona."
+
+    if diferencas:
+        maior = max(range(len(diferencas)), key=lambda i: diferencas[i])
+        menor = min(range(len(diferencas)), key=lambda i: diferencas[i])
+        rotulos = [formatar_categoria(c) for c in serie.index]
+        texto += (
+            f" Maior subida: «{rotulos[maior]}» → «{rotulos[maior + 1]}», "
+            f"+{formatar_numero(diferencas[maior])}."
+            f" Maior descida: «{rotulos[menor]}» → «{rotulos[menor + 1]}», "
+            f"{formatar_numero(diferencas[menor])}."
+        )
+    blocos.append(("Evolução", texto))
+
+    resultado = regressao_linear(valores)
+    if resultado is None:
+        blocos.append(("Tendência", (
+            f"Regressão não calculada — são precisos pelo menos "
+            f"{MIN_PERIODOS_REGRESSAO} períodos e há {formatar_numero(len(valores))}."
+        )))
+    else:
+        declive, r2 = resultado
+        termos = ("fraco", "moderado", "forte")
+        ajuste = classificar(r2, R2_AJUSTE_FRACO, R2_AJUSTE_FORTE, termos)
+        if r2 < R2_AJUSTE_FRACO:
+            leitura = "tendência indefinida: os dados não se aproximam de uma reta"
+        elif declive > 0:
+            leitura = "tendência crescente"
+        elif declive < 0:
+            leitura = "tendência decrescente"
+        else:
+            leitura = "tendência estável"
+        blocos.append(("Tendência", (
+            f"Regressão linear com declive de {'+' if declive >= 0 else ''}"
+            f"{formatar_numero(round(declive, 2))} por período e R² de "
+            f"{formatar_numero(round(r2, 3))} — ajuste {ajuste} "
+            f"({criterio(R2_AJUSTE_FRACO, R2_AJUSTE_FORTE, termos, sufixo='')}). "
+            f"Leitura: {leitura}."
+        )))
+
+    taxa = crescimento_medio(valores)
+    if taxa is None:
+        if len(valores) < MIN_PERIODOS_CRESCIMENTO:
+            razao = (f"são precisos pelo menos {MIN_PERIODOS_CRESCIMENTO} períodos e "
+                     f"há {formatar_numero(len(valores))}")
+        else:
+            razao = "a série tem valores nulos ou negativos, e a taxa geométrica não existe"
+        blocos.append(("Crescimento médio", f"Não calculado — {razao}."))
+    else:
+        blocos.append(("Crescimento médio", (
+            f"Taxa de crescimento média geométrica de {'+' if taxa >= 0 else ''}"
+            f"{formatar_numero(round(taxa, 1))}% por período."
+        )))
+
+    sazonal = indice_sazonal(serie)
+    if sazonal is None:
+        blocos.append(("Sazonalidade", (
+            f"Não avaliada — o índice sazonal precisa de pelo menos "
+            f"{MIN_CICLOS_SAZONALIDADE} ciclos anuais completos de dados mensais, "
+            "e não foi possível identificá-los nesta série."
+        )))
+    else:
+        nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho",
+                 "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        indices = sazonal["indices"]
+        mais_forte = max(indices, key=indices.get)
+        mais_fraco = min(indices, key=indices.get)
+        blocos.append(("Sazonalidade", (
+            f"Índice sazonal sobre {formatar_numero(sazonal['ciclos'])} ciclos anuais "
+            f"(média de cada mês a dividir pela média geral). "
+            f"Mês mais forte: {nomes[mais_forte - 1]}, índice "
+            f"{formatar_numero(round(indices[mais_forte], 2))} — "
+            f"{formatar_numero(round((indices[mais_forte] - 1) * 100, 1))}% acima do mês "
+            f"típico. Mês mais fraco: {nomes[mais_fraco - 1]}, índice "
+            f"{formatar_numero(round(indices[mais_fraco], 2))} — "
+            f"{formatar_numero(round((1 - indices[mais_fraco]) * 100, 1))}% abaixo."
+        )))
+    return blocos
+
+
+def analise_anual(serie_anual: pd.Series) -> list[tuple[str, str]]:
+    """Quebra ano a ano, com variacao interanual."""
+    anos = list(serie_anual.index)
+    valores = [float(v) for v in serie_anual.values]
+
+    partes = [
+        f"{ano}: {formatar_numero(valor)}" for ano, valor in zip(anos, valores)
+    ]
+    blocos = [("Ano a ano", "Totais por ano — " + "; ".join(partes) + ".")]
+
+    variacoes = []
+    for anterior, seguinte, valor_a, valor_s in zip(anos, anos[1:], valores, valores[1:]):
+        diferenca = valor_s - valor_a
+        texto = f"{anterior}→{seguinte}: {'+' if diferenca >= 0 else ''}{formatar_numero(diferenca)}"
+        if valor_a != 0:
+            texto += f" ({'+' if diferenca >= 0 else ''}{formatar_numero(round(diferenca / abs(valor_a) * 100, 1))}%)"
+        variacoes.append(texto)
+
+    positivas = sum(1 for a, b in zip(valores, valores[1:]) if b > a)
+    acumulada = valores[-1] - valores[0]
+    resumo = (
+        "Variação interanual — " + "; ".join(variacoes) + ". "
+        f"{formatar_numero(positivas)} de {formatar_numero(len(valores) - 1)} "
+        "variações foram positivas. "
+        f"Do primeiro ao último ano: {'+' if acumulada >= 0 else ''}"
+        f"{formatar_numero(acumulada)}"
+    )
+    if valores[0] != 0:
+        resumo += f" ({'+' if acumulada >= 0 else ''}{formatar_numero(round(acumulada / abs(valores[0]) * 100, 1))}%)"
+    resumo += (
+        f". Ano mais alto: {serie_anual.idxmax()} "
+        f"({formatar_numero(serie_anual.max())}); mais baixo: {serie_anual.idxmin()} "
+        f"({formatar_numero(serie_anual.min())})."
+    )
+    blocos.append(("Comparação entre anos", resumo))
+    return blocos
+
+
 # ---------------------------------------------------------------- documento
 
 
@@ -759,6 +1268,17 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
             paragrafo = documento.add_paragraph()
             paragrafo.add_run(nota).italic = True
 
+        if plano.get("analise", "completa") == "completa":
+            documento.add_heading("Análise", level=2)
+            blocos = montar_analise(
+                serie, grafico, resultado["n_linhas"],
+                resultado["temporal"], resultado["serie_anual"],
+            )
+            for etiqueta, texto in blocos:
+                paragrafo = documento.add_paragraph()
+                paragrafo.add_run(f"{etiqueta}. ").bold = True
+                paragrafo.add_run(texto)
+
         if grafico.get("tabela_dados"):
             acrescentar_tabela(documento, serie, grafico, notas)
 
@@ -779,7 +1299,13 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
             documento.add_paragraph(linha, style="List Bullet")
 
     saida.parent.mkdir(parents=True, exist_ok=True)
-    documento.save(saida)
+    try:
+        documento.save(saida)
+    except PermissionError:
+        raise ErroDados(
+            f"Não consigo escrever «{saida}»: o ficheiro está aberto noutro programa "
+            "(provavelmente o Word). Fecha-o e tenta outra vez."
+        ) from None
 
 
 def acrescentar_tabela(documento, serie: pd.Series, grafico: dict,
@@ -823,8 +1349,13 @@ def executar(args) -> int:
     preparados = []
 
     for indice, grafico in enumerate(plano["graficos"], start=1):
-        serie, n_linhas = preparar_dados(excel, grafico, indice, avisos, notas)
-        preparados.append({"grafico": grafico, "serie": serie, "n_linhas": n_linhas})
+        serie, n_linhas, temporal, anual = preparar_dados(
+            excel, grafico, indice, avisos, notas
+        )
+        preparados.append({
+            "grafico": grafico, "serie": serie, "n_linhas": n_linhas,
+            "temporal": temporal, "serie_anual": anual,
+        })
 
     print(f"Plano lido: {len(preparados)} gráfico(s).")
     for nota in notas:

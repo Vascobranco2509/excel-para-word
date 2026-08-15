@@ -20,8 +20,10 @@ plano, verifica os dados e gera o documento.
 - Lê `.xlsx`, com uma ou mais folhas.
 - Desenha gráficos de **barras**, **linhas** e **circular**.
 - Agrega por **soma**, **média** ou **contagem**.
-- Escreve, por baixo de cada gráfico, uma frase com o total, o valor mais alto e
-  o mais baixo — números calculados a partir da mesma conta que desenhou o gráfico.
+- Escreve, por baixo de cada gráfico, uma **análise estatística completa**: dispersão,
+  concentração, valores atípicos, tendência, crescimento médio, sazonalidade e quebra
+  **ano a ano** com variação interanual. Tudo calculado a partir da mesma conta que
+  desenhou o gráfico.
 - Junta a tabela de dados, se pedires.
 - **Recusa gerar o relatório** quando encontra problemas nos dados, até tu dizeres
   que os aceitas.
@@ -29,9 +31,13 @@ plano, verifica os dados e gera o documento.
 **Não faz, de propósito:**
 
 - Não lê CSV, `.xls` nem `.xlsm`.
-- Não escreve recomendações, causas nem previsões. Só descreve.
+- Não escreve recomendações, causas nem previsões.
+- **Não avalia desempenho** — nunca diz «bom», «fraco» ou «preocupante».
+  [A razão está aqui abaixo](#porque-é-que-não-há-juízos-de-desempenho).
 - Não inventa dados nem preenche células vazias em silêncio.
 - Não altera o ficheiro Excel de origem.
+- Não aplica um método estatístico quando não há pontos que cheguem — diz que não
+  o aplicou, e porquê.
 
 ## Instalação
 
@@ -51,14 +57,18 @@ Para usar como skill do Claude Code, copia a pasta para `~/.claude/skills/`.
 
 ## Exemplo
 
-O repositório traz um exemplo completo. Para o repetir:
+O repositório traz um exemplo completo, com três anos de dados mensais. Para o repetir:
 
 ```bash
 python scripts/gerar_relatorio.py \
-  --dados exemplos/vendas_2025.xlsx \
+  --dados exemplos/vendas_2023_2025.xlsx \
   --plano exemplos/plano.json \
   --saida relatorio.docx
 ```
+
+> **Os dados do exemplo são inventados.** `vendas_2023_2025.xlsx` foi gerado por uma
+> fórmula, número a número, para a análise ter alguma coisa que dizer. Não representa
+> vendas de ninguém: serve para mostrar o que a ferramenta faz, não para tirar conclusões.
 
 ## Comandos
 
@@ -110,6 +120,14 @@ Esta é a referência única. O `SKILL.md` aponta para aqui e não a repete.
 | `nota` | não | Frase de enquadramento, **sem números**. Fica em itálico por baixo da descrição. |
 | `tabela_dados` | não | `true` acrescenta a tabela por baixo do gráfico. Acima de 30 categorias mostra as primeiras 30 e diz quantas ficaram de fora. |
 | `linha_cabecalho` | não | Número da linha do Excel onde estão os nomes das colunas. Só é preciso quando a deteção automática escolher a linha errada. |
+| `coluna_periodo` | não | Coluna com as datas ou os anos, para a quebra ano a ano. Só é preciso quando o `eixo_x` é outra coisa (ex.: gráfico por canal, com a data noutra coluna). |
+| `eixo_temporal` | não | `true`/`false` para forçar ou travar a deteção de linha do tempo. Só é preciso com rótulos invulgares (`Semana 1`, `P1`). |
+
+E, ao nível do plano (fora da lista `graficos`):
+
+| Campo | Obrigatório | O que é |
+|---|---|---|
+| `analise` | não | `completa` (por omissão) ou `curta`, se só quiseres o gráfico e uma frase. |
 
 Qualquer campo que não esteja nesta tabela é recusado com erro. É de propósito:
 apanha planos escritos contra uma versão antiga.
@@ -138,6 +156,67 @@ poria Abril antes de Janeiro e daria uma série temporal errada.
 **O campo `nota` não aceita números.** Os números do relatório saem sempre dos
 dados. Se a nota pudesse ter números escritos à mão, bastava mudar o Excel e não
 refazer o plano para o texto passar a desmentir o gráfico ao lado.
+
+## A análise
+
+Por baixo de cada gráfico entra um bloco **Análise**, com secções etiquetadas:
+
+| Secção | O que traz |
+|---|---|
+| Âmbito | Nº de categorias e de linhas, total, média, mediana |
+| Amplitude | Máximo, mínimo, diferença e rácio entre eles |
+| Dispersão | Desvio-padrão e coeficiente de variação |
+| Concentração | Peso da maior categoria e das três maiores |
+| Valores atípicos | Método de Tukey (1,5×IQR) |
+| Evolução | Variação primeiro→último, quantas subidas e descidas, maior subida e descida |
+| Tendência | Regressão linear: declive e R² |
+| Crescimento médio | Taxa geométrica por período |
+| Sazonalidade | Índice sazonal: média de cada mês a dividir pela média geral |
+| Ano a ano | Totais por ano, variação interanual, ano mais alto e mais baixo |
+
+### Nenhum método corre sem pontos que cheguem
+
+Uma regressão sobre três pontos faz um relatório **parecer** sério sendo falso. Cada
+método tem um mínimo, e quando não é cumprido o relatório **diz que não correu e porquê**,
+em vez de calcular na mesma:
+
+| Método | Mínimo |
+|---|---|
+| Regressão linear | 4 períodos, e um eixo temporal |
+| Crescimento médio geométrico | 3 períodos, todos maiores que zero |
+| Valores atípicos (Tukey) | 5 categorias |
+| Índice sazonal | 2 ciclos anuais completos de dados mensais |
+| Variação interanual | 2 anos |
+
+**Métodos temporais nunca correm num eixo categórico.** Uma regressão sobre «Canal» não
+significa nada: a ordem das categorias é arbitrária, e o declive mudaria só por trocares
+duas colunas no Excel. Nesse caso o relatório diz isso mesmo.
+
+### Os termos qualitativos, e a regra de cada um
+
+Nenhuma palavra qualitativa entra sem uma regra calculada, e a regra aparece ao lado dela
+no documento:
+
+| Termo | Regra |
+|---|---|
+| dispersão baixa / moderada / elevada | coeficiente de variação < 15% / 15–35% / > 35% |
+| ajuste fraco / moderado / forte | R² < 0,3 / 0,3–0,7 / > 0,7 |
+| tendência crescente / decrescente | declive positivo/negativo **e** R² ≥ 0,3 |
+| tendência indefinida | R² < 0,3 |
+| série monótona | todas as variações com o mesmo sinal |
+| concentração baixa / moderada / elevada | maior categoria < 25% / 25–50% / > 50% do total |
+
+### Porque é que não há juízos de desempenho
+
+O relatório nunca escreve «bom», «fraco», «preocupante» ou «excelente». Não é timidez:
+essas palavras exigem uma **meta ou uma referência que o ficheiro Excel não contém**.
+Dizer que um canal teve «fraco desempenho» sem saber contra que objetivo é uma afirmação
+que não se consegue defender — e um relatório indefensável é pior do que um relatório
+curto.
+
+O que entra em vez disso é vocabulário técnico com significado fixo: `tendência crescente`,
+`dispersão elevada`, `ajuste moderado`, `valor atípico`. Cada um com o número e o critério
+à frente, para quem lê poder discordar do critério em vez de discordar da opinião.
 
 ## Quando é que se recusa a gerar
 

@@ -45,7 +45,7 @@ pdftoppm -jpeg -r 100 r.pdf pagina
 ```
 SKILL.md  README.md  CLAUDE.md  LICENSE  requirements.txt  .gitignore
 scripts/gerar_relatorio.py
-exemplos/vendas_2025.xlsx  plano.json  relatorio_exemplo.docx  preview.png
+exemplos/vendas_2023_2025.xlsx  plano.json  relatorio_exemplo.docx  preview.png
 testes/test_gerar_relatorio.py
 ```
 
@@ -72,7 +72,8 @@ testes/test_gerar_relatorio.py
 - Nunca alterar nem gravar por cima do Excel original.
 - Nunca inventar dados, preencher células vazias em silêncio, nem estimar
   números a olho a partir do gráfico.
-- Nunca escrever no relatório recomendações, causas, previsões ou juízos de valor.
+- Nunca escrever no relatório recomendações, causas ou previsões.
+- Nunca escrever avaliações de desempenho («bom», «fraco»). Ver a decisão em 7.
 - Nunca perguntar ao utilizador algo que está dentro do ficheiro (colunas,
   folhas, número de linhas) — ler primeiro.
 - Nunca despejar perguntas em série. Nunca perguntar sobre cores ou tipos de letra.
@@ -88,8 +89,24 @@ testes/test_gerar_relatorio.py
 
 - Nome do repositório e da skill: `excel-para-word`. Público, licença MIT.
 - Relatório sempre em **português**. README em português com resumo em inglês.
-- A análise no Word é **só descritiva**: o que o gráfico mostra, com números
-  concretos. Sem insights, sem recomendações, sem estatística avançada.
+- **A análise é estatística e completa** (decisão revista em 15/08/2026; antes era
+  «só descritiva, sem estatística avançada»). Entra dispersão, concentração,
+  atípicos, tendência por regressão, crescimento geométrico, índice sazonal e
+  quebra ano a ano. Continua sem causas, sem previsões e sem recomendações.
+- **A linha que não se atravessa**: nenhuma palavra qualitativa entra sem uma
+  regra calculada, e a regra vai escrita ao lado. Nunca «bom», «mau», «fraco» ou
+  «preocupante» — essas exigem uma meta que o ficheiro Excel não tem, e uma
+  afirmação indefensável é pior do que um relatório curto. Sim a «tendência
+  crescente», «dispersão elevada», «ajuste moderado», sempre com número e critério.
+- **Nenhum método corre sem pontos que cheguem.** Regressão: 4 períodos.
+  Crescimento geométrico: 3 períodos, todos positivos. Tukey: 5 categorias.
+  Índice sazonal: 2 ciclos anuais. Quando falta, o relatório **diz que não correu
+  e porquê** — uma regressão sobre 3 pontos faz um documento parecer sério sendo
+  falso.
+- **Métodos temporais nunca correm num eixo categórico.** O declive de «Canal»
+  mudaria só por trocar duas colunas no Excel.
+- Os limiares dos termos qualitativos vivem em constantes no topo do script, não
+  espalhados pelo código, e estão publicados no README.
 - As instruções são dadas em **linguagem natural**; o Claude escreve o
   `plano.json`. Não há formulário para o utilizador preencher.
 - Formatos de entrada: **só `.xlsx`**. CSV, `.xls` e `.xlsm` ficam de fora.

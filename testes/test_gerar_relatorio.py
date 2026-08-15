@@ -62,8 +62,17 @@ def preparar(caminho: Path, config: dict):
     avisos: list[str] = []
     notas: list[str] = []
     excel = gr.abrir_excel(caminho)
-    serie, n_linhas = gr.preparar_dados(excel, config, 1, avisos, notas)
+    serie, n_linhas, _, _ = gr.preparar_dados(excel, config, 1, avisos, notas)
     return serie, n_linhas, avisos, notas
+
+
+def preparar_completo(caminho: Path, config: dict):
+    """Como preparar(), mas devolve tambem o eixo temporal e a serie anual."""
+    avisos: list[str] = []
+    notas: list[str] = []
+    excel = gr.abrir_excel(caminho)
+    serie, n_linhas, temporal, anual = gr.preparar_dados(excel, config, 1, avisos, notas)
+    return serie, n_linhas, temporal, anual, avisos
 
 
 # --------------------------------------------------------- ordem das categorias
@@ -492,6 +501,147 @@ def test_plano_com_json_invalido_diz_a_linha(tmp_path):
         gr.ler_plano(plano)
 
 
+# ------------------------------------------------------------- estatistica
+# Valores conferidos a parte. Um R2 errado nao se ve a olho como se ve um
+# grafico partido: tem de ser batido contra outra conta.
+
+
+def test_regressao_com_reta_perfeita():
+    declive, r2 = gr.regressao_linear([0.0, 2.0, 4.0, 6.0, 8.0])
+    assert declive == pytest.approx(2.0)
+    assert r2 == pytest.approx(1.0)
+
+
+def test_regressao_com_serie_plana_da_declive_zero():
+    declive, r2 = gr.regressao_linear([5.0, 5.0, 5.0, 5.0])
+    assert declive == pytest.approx(0.0)
+    assert r2 == pytest.approx(1.0)
+
+
+def test_regressao_nao_corre_com_poucos_pontos():
+    """Uma reta sobre tres pontos faz um relatorio parecer serio sendo falso."""
+    assert gr.regressao_linear([1.0, 2.0, 3.0]) is None
+
+
+def test_crescimento_medio_duplica_por_periodo():
+    # 100 -> 200 -> 400: 100% por periodo
+    assert gr.crescimento_medio([100.0, 200.0, 400.0]) == pytest.approx(100.0)
+
+
+def test_crescimento_medio_recusa_zeros_e_negativos():
+    assert gr.crescimento_medio([100.0, 0.0, 400.0]) is None
+    assert gr.crescimento_medio([100.0, -50.0, 400.0]) is None
+
+
+def test_crescimento_medio_recusa_poucos_pontos():
+    assert gr.crescimento_medio([100.0, 200.0]) is None
+
+
+def test_atipicos_encontra_o_valor_disparatado():
+    serie = pd.Series([10, 11, 12, 11, 10, 900])
+    encontrados = gr.detetar_atipicos(serie)
+    assert [v for _, v in encontrados] == [900]
+
+
+def test_atipicos_nao_correm_com_poucas_categorias():
+    assert gr.detetar_atipicos(pd.Series([1, 2, 3, 4])) is None
+
+
+def test_classificacao_usa_os_limiares_documentados():
+    termos = ("baixa", "moderada", "elevada")
+    assert gr.classificar(14.9, 15, 35, termos) == "baixa"
+    assert gr.classificar(20.0, 15, 35, termos) == "moderada"
+    assert gr.classificar(35.1, 15, 35, termos) == "elevada"
+
+
+# ------------------------------------------------------------ eixo temporal
+
+
+def test_meses_em_portugues_sao_linha_do_tempo():
+    assert gr.parece_temporal(pd.Index(MESES)) is True
+
+
+def test_anos_sao_linha_do_tempo():
+    assert gr.parece_temporal(pd.Index([2023, 2024, 2025])) is True
+
+
+def test_canais_nao_sao_linha_do_tempo():
+    """Uma regressao sobre «Canal» mudaria de declive so por trocar colunas."""
+    assert gr.parece_temporal(pd.Index(["Meta", "Google Ads", "TikTok"])) is False
+
+
+def test_extrair_ano_de_varios_formatos():
+    assert gr.extrair_ano("2023-01") == 2023
+    assert gr.extrair_ano(2024) == 2024
+    assert gr.extrair_ano(pd.Timestamp("2025-06-30")) == 2025
+    assert gr.extrair_ano("Janeiro") is None
+
+
+def test_indice_sazonal_precisa_de_dois_ciclos():
+    um_ano = pd.Series(range(1, 13), index=[f"2025-{m:02d}" for m in range(1, 13)])
+    assert gr.indice_sazonal(um_ano) is None
+
+
+def test_indice_sazonal_encontra_o_mes_forte():
+    rotulos, valores = [], []
+    for ano in (2024, 2025):
+        for mes in range(1, 13):
+            rotulos.append(f"{ano}-{mes:02d}")
+            valores.append(300 if mes == 12 else 100)
+    resultado = gr.indice_sazonal(pd.Series(valores, index=rotulos))
+
+    assert resultado["ciclos"] == 2
+    assert max(resultado["indices"], key=resultado["indices"].get) == 12
+
+
+# -------------------------------------------------------------- bloco analise
+
+
+def etiquetas(blocos):
+    return [etiqueta for etiqueta, _ in blocos]
+
+
+def texto_de(blocos, etiqueta):
+    return next(t for e, t in blocos if e == etiqueta)
+
+
+def test_eixo_categorico_nao_leva_tendencia():
+    serie = pd.Series([10, 20, 30], index=["Meta", "Google", "TikTok"])
+    blocos = gr.montar_analise(serie, grafico(eixo_x="Canal"), 3, False, None)
+
+    assert "Tendência" not in etiquetas(blocos)
+    assert "categórico" in texto_de(blocos, "Evolução")
+
+
+def test_serie_curta_diz_que_a_regressao_nao_correu():
+    serie = pd.Series([10, 20, 30], index=["Janeiro", "Fevereiro", "Marco"])
+    blocos = gr.montar_analise(serie, grafico(), 3, True, None)
+
+    assert "não calculada" in texto_de(blocos, "Tendência")
+    assert "pelo menos 4" in texto_de(blocos, "Tendência")
+
+
+def test_analise_ano_a_ano_com_dois_anos():
+    anual = pd.Series([100.0, 150.0], index=[2024, 2025])
+    serie = pd.Series([10, 20, 30, 40], index=MESES[:4])
+    blocos = gr.montar_analise(serie, grafico(), 4, True, anual)
+
+    comparacao = texto_de(blocos, "Comparação entre anos")
+    assert "+50" in comparacao
+    assert "+50%" in comparacao
+    assert "2025" in texto_de(blocos, "Ano a ano")
+
+
+def test_sem_juizos_de_valor_no_texto():
+    """A linha que nao se atravessa: nada de «bom», «mau» ou «fraco desempenho»."""
+    serie = pd.Series([10, 20, 15, 40, 35, 60], index=[f"2025-{m:02d}" for m in range(1, 7)])
+    blocos = gr.montar_analise(serie, grafico(), 6, True, None)
+    tudo = " ".join(t for _, t in blocos).lower()
+
+    for proibida in ("bom ", "mau ", "excelente", "preocupante", "fraco desempenho"):
+        assert proibida not in tudo, f"apareceu um juízo de valor: {proibida}"
+
+
 # --------------------------------------------------------- bloqueio por avisos
 
 
@@ -586,6 +736,55 @@ def test_nao_ficam_pastas_temporarias_para_tras(tmp_path):
                "--saida", str(tmp_path / "r.docx"))
 
     assert set(base.glob("excel-para-word-*")) == antes
+
+
+def test_analise_curta_nao_traz_o_bloco_de_analise(tmp_path):
+    from docx import Document
+
+    ficheiro = escrever_excel(tmp_path / "limpo.xlsx",
+                              {"Mes": MESES, "Valor": list(range(1, 13))})
+    plano = tmp_path / "plano.json"
+    plano.write_text(json.dumps(
+        {"titulo_relatorio": "T", "analise": "curta", "graficos": [grafico()]},
+        ensure_ascii=False), encoding="utf-8")
+    saida = tmp_path / "r.docx"
+    correr_cli("--dados", str(ficheiro), "--plano", str(plano), "--saida", str(saida))
+
+    texto = "\n".join(p.text for p in Document(str(saida)).paragraphs)
+    assert "Análise" not in texto
+    assert "O total é" in texto
+
+
+def test_analise_completa_e_o_comportamento_por_omissao(tmp_path):
+    from docx import Document
+
+    ficheiro = escrever_excel(tmp_path / "limpo.xlsx",
+                              {"Mes": MESES, "Valor": list(range(1, 13))})
+    plano = escrever_plano(tmp_path / "plano.json", [grafico()])
+    saida = tmp_path / "r.docx"
+    correr_cli("--dados", str(ficheiro), "--plano", str(plano), "--saida", str(saida))
+
+    texto = "\n".join(p.text for p in Document(str(saida)).paragraphs)
+    assert "Análise" in texto
+    assert "Dispersão" in texto
+
+
+def test_campo_desconhecido_no_plano_e_recusado(tmp_path):
+    plano = tmp_path / "plano.json"
+    plano.write_text(json.dumps(
+        {"titulo_relatorio": "T", "graficos": [grafico()], "autor": "eu"},
+        ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(gr.ErroDados, match="autor"):
+        gr.ler_plano(plano)
+
+
+def test_analise_com_valor_invalido_e_recusada(tmp_path):
+    plano = tmp_path / "plano.json"
+    plano.write_text(json.dumps(
+        {"titulo_relatorio": "T", "analise": "profunda", "graficos": [grafico()]},
+        ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(gr.ErroDados, match="profunda"):
+        gr.ler_plano(plano)
 
 
 def test_documento_gerado_tem_o_conteudo_esperado(tmp_path):
