@@ -106,6 +106,17 @@ testes/test_gerar_relatorio.py
   meta nem sugerir uma «razoável»** — o número vem de fora ou não há avaliação.
   Mesmo com meta, o relatório diz quanto foi contra quanto se queria, e nunca se
   o resultado é bom.
+- **Várias séries no mesmo gráfico** com o campo `serie` (decisão de 15/08/2026).
+  Internamente, `preparar_dados` devolve `{nome: pd.Series}`; sem o campo é um
+  dicionário com uma entrada de nome vazio. **Nenhuma função de análise mudou** —
+  continuam a receber uma `pd.Series` e a ser chamadas uma vez por série.
+- **O conjunto não é a soma das séries**: é reagregar os dados em bruto ignorando
+  a coluna das séries. Somar médias daria um número errado.
+- **Todas as séries são alinhadas à grelha do conjunto**, nunca a uma grelha
+  própria: uma série que comece a meio ficaria desenhada por cima dos rótulos
+  errados, em silêncio. Falta entra como buraco, nunca como zero.
+- **Séries distinguem-se por cor, traço e marca** — o gráfico tem de ler-se
+  impresso a preto e branco e por quem não distingue vermelho de verde.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.

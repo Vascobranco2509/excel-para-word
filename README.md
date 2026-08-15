@@ -20,6 +20,9 @@ plano, verifica os dados e gera o documento.
 - Lê **`.xlsx`, `.xlsm` e CSV**. No CSV deteta sozinho o separador (`;` ou `,`) e a
   codificação. Nos ficheiros Excel, aceita várias folhas.
 - Desenha gráficos de **barras**, **linhas** e **circular**.
+- Põe **várias séries no mesmo gráfico** — canais, campanhas ou regiões lado a lado, com
+  legenda, para se compararem de relance em vez de em três gráficos com escalas
+  diferentes.
 - Agrega por **soma**, **média** ou **contagem**.
 - Escreve, por baixo de cada gráfico, uma **análise estatística completa**: dispersão,
   concentração, valores atípicos, tendência, crescimento médio, sazonalidade e quebra
@@ -127,13 +130,14 @@ Esta é a referência única. O `SKILL.md` aponta para aqui e não a repete.
 | `coluna_periodo` | não | Coluna com as datas ou os anos, para a quebra ano a ano. Só é preciso quando o `eixo_x` é outra coisa (ex.: gráfico por canal, com a data noutra coluna). |
 | `eixo_temporal` | não | `true`/`false` para forçar ou travar a deteção de linha do tempo. Só é preciso com rótulos invulgares (`Semana 1`, `P1`). |
 | `previsao` | não | Número de períodos a prever. Sem este campo não há previsão. [Ver as guardas](#previsões). |
-| `meta` | não | Objeto `{"valor": N, "ambito": "total"\|"categoria"}`. [Ver como funciona](#avaliação-face-a-uma-meta). |
+| `meta` | não | Objeto `{"valor": N, "ambito": "total"\|"categoria"\|"serie"}`. [Ver como funciona](#avaliação-face-a-uma-meta). |
+| `serie` | não | Coluna cujos valores dão as séries do gráfico. [Ver como funciona](#várias-séries-no-mesmo-gráfico). |
 
 E, ao nível do plano (fora da lista `graficos`):
 
 | Campo | Obrigatório | O que é |
 |---|---|---|
-| `analise` | não | `completa` (por omissão) ou `curta`, se só quiseres o gráfico e uma frase. |
+| `analise` | não | `completa` (por omissão), `curta` (só o gráfico e uma frase) ou `detalhada` (repete a análise inteira para cada série). |
 
 Qualquer campo que não esteja nesta tabela é recusado com erro. É de propósito:
 apanha planos escritos contra uma versão antiga.
@@ -194,6 +198,30 @@ Uma coluna de datas em texto só é tratada como linha do tempo quando a conven�
 
 O último caso é deliberado: falhar a análise é seguro, trocar Janeiro por Fevereiro não é.
 Um índice sazonal com os meses trocados estaria errado com ar de certo.
+
+## Várias séries no mesmo gráfico
+
+O campo `serie` diz qual é a coluna cujos valores passam a ser as séries:
+
+```json
+{ "tipo": "linhas", "eixo_x": "Periodo", "eixo_y": "Valor",
+  "serie": "Canal", "agregacao": "soma", "titulo": "Valor por canal" }
+```
+
+As séries ficam com **cores, traços e marcas diferentes** — o gráfico continua a ler-se
+impresso a preto e branco e por quem não distingue vermelho de verde.
+
+**Uma série que não cubra todos os períodos** — um canal que só existiu a partir de certa
+altura — fica com um buraco no gráfico, nunca com um zero. Zero seria um valor inventado.
+
+**O conjunto não é a soma das séries.** A análise geral é feita reagregando os dados em
+bruto, ignorando a coluna das séries. Com `agregacao: media`, somar as médias de cada
+série daria um número errado.
+
+**Guardas:** um gráfico circular com `serie` dá erro (um circular mostra a repartição de
+um total, não a evolução de várias séries); acima de 6 séries há aviso, porque as linhas
+começam a confundir-se; e usar a mesma coluna como eixo x e como série dá erro, porque
+cada série ficaria com um ponto só.
 
 ## A análise
 
@@ -363,6 +391,20 @@ python -m pytest testes/ -v
 Os testes usam ficheiros propositadamente sujos: texto onde deviam estar números,
 células vazias, meses fora de ordem alfabética, folhas que não existem, caminhos
 com espaços e acentos.
+
+## Desempenho, medido
+
+Com um ficheiro de **250 000 linhas** e 3 séries, num portátil comum:
+
+| Formato | Tempo até ao `.docx` |
+|---|---|
+| CSV | **2,7 s** |
+| `.xlsx` | **16 s** |
+
+O Excel é mais lento de propósito: além de o ler, o programa vai buscar as **células em
+bruto** para detetar números guardados como texto. É esse trabalho extra que impede o
+`1.250` de ser lido como 1,25. Trocar esses segundos por risco de números errados não
+compensa.
 
 ## Versões testadas
 

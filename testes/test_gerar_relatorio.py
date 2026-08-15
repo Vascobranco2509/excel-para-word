@@ -62,8 +62,17 @@ def preparar(caminho: Path, config: dict):
     avisos: list[str] = []
     notas: list[str] = []
     excel = gr.abrir_dados(caminho)
-    serie, n_linhas, _, _ = gr.preparar_dados(excel, config, 1, avisos, notas)
-    return serie, n_linhas, avisos, notas
+    _, n_linhas, _, _, conjunto = gr.preparar_dados(excel, config, 1, avisos, notas)
+    return conjunto, n_linhas, avisos, notas
+
+
+def preparar_series(caminho: Path, config: dict):
+    """Devolve o dicionario {nome: serie} e os avisos."""
+    avisos: list[str] = []
+    notas: list[str] = []
+    fonte = gr.abrir_dados(caminho)
+    series, _, temporal, _, _ = gr.preparar_dados(fonte, config, 1, avisos, notas)
+    return series, temporal, avisos, notas
 
 
 def preparar_completo(caminho: Path, config: dict):
@@ -71,8 +80,8 @@ def preparar_completo(caminho: Path, config: dict):
     avisos: list[str] = []
     notas: list[str] = []
     excel = gr.abrir_dados(caminho)
-    serie, n_linhas, temporal, anual = gr.preparar_dados(excel, config, 1, avisos, notas)
-    return serie, n_linhas, temporal, anual, avisos
+    _, n_linhas, temporal, anual, conjunto = gr.preparar_dados(excel, config, 1, avisos, notas)
+    return conjunto, n_linhas, temporal, anual, avisos
 
 
 # --------------------------------------------------------- ordem das categorias
@@ -504,6 +513,16 @@ def test_csv_com_celulas_perdidas_continua_a_avisar(tmp_path):
     assert any("vinte" in a for a in avisos)
 
 
+def test_categoria_chamada_NA_nao_desaparece(tmp_path):
+    """«NA» e North America, nao «vazio». O default do pandas comia-a."""
+    ficheiro = escrever_csv(tmp_path / "na.csv", [
+        "Regiao;Valor", "NA;100", "EU;200", "APAC;50",
+    ])
+    serie, _, _, _ = preparar(ficheiro, grafico(eixo_x="Regiao"))
+    assert "NA" in list(serie.index)
+    assert serie["NA"] == 100
+
+
 def test_xlsm_e_aceite(tmp_path):
     caminho = tmp_path / "com_macros.xlsm"
     pd.DataFrame({"Mes": ["Janeiro", "Fevereiro"], "Valor": [10, 20]}).to_excel(
@@ -801,6 +820,138 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
                               {"Mes": categorias, "Valor": list(range(50))})
     _, _, avisos, _ = preparar(ficheiro, grafico(tipo="linhas", tabela_dados=True))
     assert any("ficariam de fora" in a for a in avisos)
+
+
+# --------------------------------------------------------------- series
+# Varias series no mesmo grafico: comparar canais ao longo do tempo.
+
+
+def ficheiro_com_canais(tmp_path: Path) -> Path:
+    return escrever_excel(tmp_path / "canais.xlsx", {
+        "Mes": ["Janeiro", "Janeiro", "Fevereiro", "Fevereiro", "Marco", "Marco"],
+        "Canal": ["Online", "Loja", "Online", "Loja", "Online", "Loja"],
+        "Valor": [100, 40, 200, 50, 300, 60],
+    })
+
+
+def test_sem_campo_serie_ha_uma_serie_so(tmp_path):
+    """O caso de sempre tem de continuar exatamente igual."""
+    ficheiro = escrever_excel(tmp_path / "s.xlsx",
+                              {"Mes": MESES[:3], "Valor": [10, 20, 30]})
+    series, _, _, _ = preparar_series(ficheiro, grafico())
+    assert list(series) == [""]
+    assert series[""].sum() == 60
+
+
+def test_pivo_separa_as_series(tmp_path):
+    series, _, _, _ = preparar_series(ficheiro_com_canais(tmp_path),
+                                      grafico(serie="Canal"))
+    assert list(series) == ["Online", "Loja"]  # ordem de aparicao no ficheiro
+    assert series["Online"].sum() == 600
+    assert series["Loja"].sum() == 150
+
+
+def test_conjunto_nao_e_a_soma_das_series_com_media(tmp_path):
+    """Com «media», somar as medias de cada serie daria um numero errado."""
+    conjunto, _, _, _ = preparar(ficheiro_com_canais(tmp_path),
+                                 grafico(serie="Canal", agregacao="media"))
+    # media de todas as linhas de Janeiro: (100+40)/2 = 70
+    assert conjunto["Janeiro"] == pytest.approx(70.0)
+
+
+def test_circular_com_series_e_erro(tmp_path):
+    with pytest.raises(gr.ErroDados, match="circular"):
+        preparar(ficheiro_com_canais(tmp_path),
+                 grafico(tipo="circular", serie="Canal"))
+
+
+def test_serie_igual_ao_eixo_x_e_erro(tmp_path):
+    with pytest.raises(gr.ErroDados, match="ao mesmo tempo"):
+        preparar(ficheiro_com_canais(tmp_path), grafico(serie="Mes"))
+
+
+def test_coluna_de_serie_inexistente_lista_as_que_existem(tmp_path):
+    with pytest.raises(gr.ErroDados) as erro:
+        preparar(ficheiro_com_canais(tmp_path), grafico(serie="Regiao"))
+    assert "Canal" in str(erro.value)
+
+
+def test_series_a_mais_avisam(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "muitas.xlsx", {
+        "Mes": ["Janeiro"] * 8,
+        "Canal": [f"C{i}" for i in range(8)],
+        "Valor": list(range(8)),
+    })
+    _, _, avisos, _ = preparar_series(ficheiro, grafico(serie="Canal"))
+    assert any("séries no mesmo gráfico" in a for a in avisos)
+
+
+def test_serie_que_nao_cobre_todas_as_categorias_fica_alinhada(tmp_path):
+    """Um canal que so existiu a partir de certa altura nao pode desalinhar
+    as linhas dos rotulos. A falta entra como buraco, nunca como zero."""
+    ficheiro = escrever_excel(tmp_path / "parcial.xlsx", {
+        "Mes": ["Janeiro", "Fevereiro", "Fevereiro", "Marco"],
+        "Canal": ["Online", "Online", "Novo", "Novo"],
+        "Valor": [10, 20, 5, 7],
+    })
+    series, _, _, _ = preparar_series(ficheiro, grafico(serie="Canal"))
+    conjunto, _, _, _ = preparar(ficheiro, grafico(serie="Canal"))
+
+    grelha = gr.alinhar(series["Novo"], conjunto.index)
+    assert len(grelha) == len(conjunto)
+    assert grelha[0] != grelha[0], "Janeiro devia ser buraco (NaN), nunca zero"
+    assert grelha[1] == pytest.approx(5.0)
+
+
+def test_comparacao_entre_series_traz_pesos(tmp_path):
+    series, temporal, _, _ = preparar_series(ficheiro_com_canais(tmp_path),
+                                             grafico(serie="Canal"))
+    blocos = gr.secao_comparacao_series(series, grafico(serie="Canal"), temporal)
+    texto = dict(blocos)["Comparação entre séries"]
+    assert "2 séries" in texto
+    assert "80%" in texto  # 600 de 750
+
+
+def test_meta_por_serie_conta_as_que_atingiram(tmp_path):
+    series, _, _, _ = preparar_series(ficheiro_com_canais(tmp_path),
+                                      grafico(serie="Canal"))
+    config = grafico(serie="Canal", meta={"valor": 200, "ambito": "serie"})
+    _, texto = gr.secao_meta_por_serie(series, config)
+    assert "1 de 2" in texto
+    assert "Loja" in texto
+
+
+def test_meta_ambito_serie_sem_series_e_erro():
+    with pytest.raises(gr.ErroDados, match="não tem séries"):
+        gr.validar_grafico(grafico(meta={"valor": 10, "ambito": "serie"}), 1)
+
+
+def test_meta_ambito_categoria_com_series_e_ambiguo():
+    with pytest.raises(gr.ErroDados, match="ambíguo"):
+        gr.validar_grafico(
+            grafico(serie="Canal", meta={"valor": 10, "ambito": "categoria"}), 1)
+
+
+def test_analise_detalhada_repete_por_serie(tmp_path):
+    from docx import Document
+
+    ficheiro = escrever_excel(tmp_path / "d.xlsx", {
+        "Mes": MESES[:3] * 2,
+        "Canal": ["Online"] * 3 + ["Loja"] * 3,
+        "Valor": [10, 20, 30, 5, 6, 7],
+    })
+    for profundidade, esperado in (("completa", False), ("detalhada", True)):
+        plano = tmp_path / f"{profundidade}.json"
+        plano.write_text(json.dumps({
+            "titulo_relatorio": "T", "analise": profundidade,
+            "graficos": [grafico(serie="Canal")],
+        }, ensure_ascii=False), encoding="utf-8")
+        saida = tmp_path / f"{profundidade}.docx"
+        correr_cli("--dados", str(ficheiro), "--plano", str(plano),
+                   "--saida", str(saida))
+        texto = "\n".join(p.text for p in Document(str(saida)).paragraphs)
+        assert "Comparação entre séries" in texto
+        assert ("Análise — Online" in texto) is esperado
 
 
 # ------------------------------------------------ achados na revisao critica

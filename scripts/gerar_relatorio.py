@@ -40,9 +40,12 @@ AGREGACOES = ("soma", "media", "contagem")
 
 CHAVES_OBRIGATORIAS = ("tipo", "eixo_x", "agregacao", "titulo")
 CHAVES_OPCIONAIS = ("folha", "eixo_y", "nota", "tabela_dados", "linha_cabecalho",
-                    "coluna_periodo", "eixo_temporal", "previsao", "meta")
+                    "coluna_periodo", "eixo_temporal", "previsao", "meta",
+                    "serie")
 
-AMBITOS_META = ("total", "categoria")
+AMBITOS_META = ("total", "categoria", "serie")
+# acima disto as linhas confundem-se umas com as outras
+MAX_SERIES = 6
 
 # ate onde se procura o cabecalho quando a tabela nao comeca na primeira linha
 MAX_LINHAS_PROCURA_CABECALHO = 25
@@ -412,10 +415,11 @@ def ler_plano(caminho: Path) -> dict:
         raise ErroDados("Falta «graficos» no plano, ou a lista está vazia.")
 
     analise = plano.get("analise", "completa")
-    if analise not in ("completa", "curta"):
+    if analise not in ("completa", "curta", "detalhada"):
         raise ErroDados(
             f"O campo «analise» do plano é «{analise}», que não existe. "
-            "Só há «completa» (por omissão) e «curta»."
+            "Há «completa» (por omissão), «curta» e «detalhada» — esta última "
+            "repete a análise inteira para cada série."
         )
 
     desconhecidas = sorted(set(plano) - {"titulo_relatorio", "graficos", "analise"})
@@ -515,6 +519,18 @@ def validar_grafico(grafico, indice: int) -> None:
                 "ficaria com «-60% da meta»). Usa um valor de zero para cima."
             )
         ambito = meta.get("ambito", "total")
+        if ambito == "serie" and not grafico.get("serie"):
+            raise ErroDados(
+                f"A «meta» do {onde} usa o âmbito «serie», mas o gráfico não tem "
+                "séries. Usa «total» ou «categoria»."
+            )
+        if ambito == "categoria" and grafico.get("serie"):
+            raise ErroDados(
+                f"A «meta» do {onde} usa o âmbito «categoria» num gráfico com "
+                "séries, e isso é ambíguo: «categoria» seriam os valores do eixo x "
+                "ou as séries? Usa «serie» para comparar cada série com a meta, ou "
+                "«total» para comparar o conjunto."
+            )
         if ambito not in AMBITOS_META:
             raise ErroDados(
                 f"A «meta» do {onde} pede o âmbito «{ambito}», que não existe. "
@@ -529,6 +545,14 @@ def validar_grafico(grafico, indice: int) -> None:
                 f"O campo «previsao» do {onde} tem de ser o número de períodos a "
                 "prever (1, 2, 3…)."
             )
+
+    coluna_serie = grafico.get("serie")
+    if coluna_serie is not None and (not isinstance(coluna_serie, str)
+                                     or not coluna_serie.strip()):
+        raise ErroDados(
+            f"O campo «serie» do {onde} tem de ser o nome da coluna cujos valores "
+            "dão as séries do gráfico (ex.: «Canal»)."
+        )
 
     periodo = grafico.get("coluna_periodo")
     if periodo is not None and (not isinstance(periodo, str) or not periodo.strip()):
@@ -641,7 +665,13 @@ class FonteCSV:
             self._tabela = pd.read_csv(
                 io.StringIO(texto), sep=separador, header=None,
                 names=range(largura) if largura else None,
-                dtype=str, keep_default_na=True, skip_blank_lines=False,
+                dtype=str,
+                # so celulas mesmo vazias contam como vazias: com o default, a
+                # categoria «NA» (North America) desaparecia do relatorio, e
+                # «NULL» ou «nan» tambem. O que nao for numero e apanhado
+                # depois pelo aviso de conversao, em vez de sumir em silencio.
+                keep_default_na=False, na_values=[""],
+                skip_blank_lines=False,
             )
         except Exception as erro:
             raise ErroDados(f"Não consigo interpretar «{caminho}» como CSV: {erro}") from None
@@ -807,6 +837,82 @@ def reconhecer_datas(df: pd.DataFrame, coluna: str, onde: str,
     return df
 
 
+def agregar(df: pd.DataFrame, eixo_x: str, eixo_y: str | None,
+            agregacao: str) -> pd.Series:
+    """Agrupa por eixo_x pela ordem de aparicao no ficheiro."""
+    if eixo_y is None:
+        return df.groupby(eixo_x, sort=False).size()
+    grupo = df.groupby(eixo_x, sort=False)[eixo_y]
+    return {"soma": grupo.sum, "media": grupo.mean,
+            "contagem": grupo.count}[agregacao]()
+
+
+def separar_series(df: pd.DataFrame, grafico: dict, eixo_x: str,
+                   eixo_y: str | None, agregacao: str, folha: str, onde: str,
+                   avisos: list[str], notas: list[str]) -> dict:
+    """Devolve {nome_da_serie: serie_agregada}.
+
+    Sem o campo «serie» devolve uma entrada so, com nome vazio -- e assim todo
+    o codigo de analise, que trabalha sobre uma pd.Series, continua igual e
+    apenas passa a ser chamado uma vez por serie.
+    """
+    coluna = grafico.get("serie")
+    if not coluna:
+        return {"": agregar(df, eixo_x, eixo_y, agregacao)}
+
+    if coluna not in df.columns:
+        raise ErroDados(
+            f"O {onde} pede «{coluna}» como coluna das séries, que não existe "
+            f"{onde_fica(folha)}. Colunas disponíveis: {listar(df.columns)}."
+        )
+    if coluna == eixo_x:
+        raise ErroDados(
+            f"O {onde} usa «{coluna}» como eixo x e como série ao mesmo tempo. "
+            "Cada série ficaria com um ponto só."
+        )
+    if grafico["tipo"] == "circular":
+        raise ErroDados(
+            f"O {onde} é circular e pede séries. Um gráfico circular mostra a "
+            "repartição de um total, não a evolução de várias séries. Usa "
+            "«linhas» ou «barras», ou tira o campo «serie»."
+        )
+
+    limpo = df.dropna(subset=[coluna])
+    perdidas = len(df) - len(limpo)
+    if perdidas:
+        acrescentar(avisos, (
+            f"{perdidas} linha(s) foram ignoradas por não terem valor em "
+            f"«{coluna}», a coluna das séries."
+        ))
+    if limpo.empty:
+        raise ErroDados(f"O {onde} ficou sem dados depois de agrupar por «{coluna}».")
+
+    series = {}
+    for nome in limpo[coluna].drop_duplicates():  # ordem de aparicao no ficheiro
+        parte = limpo[limpo[coluna] == nome]
+        agregada = agregar(parte, eixo_x, eixo_y, agregacao)
+        if not agregada.empty:
+            series[formatar_categoria(nome)] = agregada
+
+    if not series:
+        raise ErroDados(f"O {onde} não produziu série nenhuma a partir de «{coluna}».")
+
+    if len(series) > MAX_SERIES:
+        acrescentar(avisos, (
+            f"{grafico['titulo']}: «{coluna}» daria {len(series)} séries no mesmo "
+            f"gráfico. Acima de {MAX_SERIES} as linhas confundem-se umas com as "
+            "outras. Considera filtrar, ou agrupar as mais pequenas."
+        ))
+
+    curtas = [n for n, s in series.items() if len(s) < 2]
+    if curtas:
+        notas.append(
+            f"{grafico['titulo']}: {listar(curtas)} tem um ponto só; "
+            "a tendência dessas séries não é calculada."
+        )
+    return series
+
+
 def preparar_dados(fonte, grafico: dict, indice: int,
                    avisos: list[str], notas: list[str]) -> tuple[pd.Series, int]:
     """Le a folha, valida colunas e devolve a serie agregada e o nº de linhas usadas.
@@ -886,14 +992,15 @@ def preparar_dados(fonte, grafico: dict, indice: int,
             f"Depois de ignorar as linhas com células vazias, o {onde} ficou sem dados."
         )
 
-    if eixo_y is None:
-        serie = df.groupby(eixo_x, sort=False).size()
-    else:
-        grupo = df.groupby(eixo_x, sort=False)[eixo_y]
-        serie = {"soma": grupo.sum, "media": grupo.mean, "contagem": grupo.count}[agregacao]()
-
+    serie = agregar(df, eixo_x, eixo_y, agregacao)
     if serie.empty:
         raise ErroDados(f"O {onde} não produziu nenhuma categoria depois de agrupar.")
+
+    # O «conjunto» e sempre esta agregacao, feita sobre os dados em bruto e a
+    # ignorar a coluna das series. Nao e a soma das series: com agregacao
+    # «media», somar as medias de cada serie daria um numero errado.
+    series = separar_series(df, grafico, eixo_x, eixo_y, agregacao, folha,
+                            onde, avisos, notas)
 
     detetar_linha_de_total(serie, grafico, avisos)
 
@@ -943,7 +1050,7 @@ def preparar_dados(fonte, grafico: dict, indice: int,
                 "Considera barras, ou agrupar as categorias mais pequenas."
             ))
 
-    return serie, len(df), bool(temporal), serie_anual
+    return series, len(df), bool(temporal), serie_anual, serie
 
 
 def calcular_serie_anual(df: pd.DataFrame, grafico: dict, eixo_x: str,
@@ -1088,8 +1195,14 @@ def converter_para_numero(df: pd.DataFrame, coluna: str, folha: str,
 # ----------------------------------------------------------------- desenho
 
 
-def desenhar(serie: pd.Series, grafico: dict, destino: Path) -> None:
-    """Desenha o grafico em PNG. O titulo nao entra na imagem: vai no Word."""
+def desenhar(serie: pd.Series, series: dict, grafico: dict, destino: Path) -> None:
+    """Desenha o grafico em PNG. O titulo nao entra na imagem: vai no Word.
+
+    «series» e o dicionario {nome: pd.Series}. Com uma entrada de nome vazio
+    desenha como sempre desenhou; com varias, uma linha ou um grupo de barras
+    por serie, com legenda.
+    """
+    nomes = [n for n in series if n != ""]
     rotulos = [formatar_categoria(c) for c in serie.index]
     valores = list(serie.values)
     tipo = grafico["tipo"]
@@ -1098,11 +1211,13 @@ def desenhar(serie: pd.Series, grafico: dict, destino: Path) -> None:
     # isso encolhe o texto ate ficar ilegivel na pagina impressa
     figura, eixos = plt.subplots(figsize=(7, 4), dpi=200)
 
-    if tipo == "barras":
-        eixos.bar(rotulos, valores, color="#3b6ea5")
+    if nomes and tipo in ("barras", "linhas"):
+        desenhar_series(eixos, series, serie.index, rotulos, tipo)
+    elif tipo == "barras":
+        eixos.bar(rotulos, valores, color=CORES[0])
         eixos.grid(axis="y", linestyle=":", alpha=0.6)
     elif tipo == "linhas":
-        eixos.plot(rotulos, valores, marker="o", color="#3b6ea5", linewidth=2)
+        eixos.plot(rotulos, valores, marker="o", color=CORES[0], linewidth=2)
         eixos.grid(linestyle=":", alpha=0.6)
     else:  # circular
         eixos.pie(
@@ -1130,6 +1245,59 @@ def desenhar(serie: pd.Series, grafico: dict, destino: Path) -> None:
 
 
 MAX_ROTULOS_LEGIVEIS = 15
+
+# cores e tracos distinguiveis tambem a preto e branco e por quem nao distingue
+# vermelho de verde: a forma do traco identifica a serie, nao so a cor
+CORES = ("#3b6ea5", "#c1553b", "#4a8c5a", "#8a6bbf", "#c99a2e", "#57868c")
+TRACOS = ("-", "--", "-.", ":", (0, (3, 1, 1, 1)), (0, (5, 1)))
+MARCAS = ("o", "s", "^", "D", "v", "P")
+
+
+def desenhar_series(eixos, series: dict, categorias, rotulos: list[str],
+                    tipo: str) -> None:
+    """Desenha varias series no mesmo grafico, com legenda.
+
+    «categorias» e a grelha do eixo x, a do conjunto. Todas as series sao
+    alinhadas a ELA e nao a uma grelha propria: se cada uma usasse a sua
+    ordem, uma serie que so comece a meio ficaria desenhada por cima dos
+    rotulos errados, em silencio.
+    """
+    nomes = list(series)
+    if tipo == "linhas":
+        for posicao, nome in enumerate(nomes):
+            eixos.plot(rotulos, alinhar(series[nome], categorias), label=nome,
+                       linewidth=2, color=CORES[posicao % len(CORES)],
+                       linestyle=TRACOS[posicao % len(TRACOS)],
+                       marker=MARCAS[posicao % len(MARCAS)], markersize=4)
+        eixos.grid(linestyle=":", alpha=0.6)
+    else:  # barras agrupadas
+        largura = 0.8 / len(nomes)
+        posicoes = range(len(rotulos))
+        for posicao, nome in enumerate(nomes):
+            deslocamento = (posicao - (len(nomes) - 1) / 2) * largura
+            eixos.bar([p + deslocamento for p in posicoes],
+                      alinhar(series[nome], categorias),
+                      width=largura, label=nome,
+                      color=CORES[posicao % len(CORES)])
+        eixos.set_xticks(list(posicoes))
+        eixos.set_xticklabels(rotulos)
+        eixos.grid(axis="y", linestyle=":", alpha=0.6)
+
+    eixos.legend(fontsize=8, framealpha=0.9)
+
+
+def alinhar(serie: pd.Series, categorias) -> list[float]:
+    """Poe a serie na grelha do eixo x.
+
+    Uma serie pode nao ter todas as categorias -- um canal que so existiu a
+    partir de certa altura. Falta e falta: entra como buraco, nao como zero,
+    porque zero seria um valor inventado.
+    """
+    grelha = []
+    for categoria in categorias:
+        valor = serie.get(categoria)
+        grelha.append(float("nan") if valor is None else float(valor))
+    return grelha
 
 
 def rodar_rotulos(eixos, rotulos: list[str]) -> None:
@@ -1601,6 +1769,34 @@ def extrair_ano(valor):
 # ------------------------------------------------------------------ analise
 
 
+def secao_meta_por_serie(series: dict, grafico: dict) -> tuple[str, str]:
+    """Compara cada serie com a meta."""
+    alvo = como_numero(grafico["meta"]["valor"])
+    agregacao = grafico["agregacao"]
+    totais = {
+        nome: (float(s.mean()) if agregacao == "media" else float(s.sum()))
+        for nome, s in series.items()
+    }
+    atingiram = [n for n, v in totais.items() if v >= alvo]
+    falharam = sorted(((n, v) for n, v in totais.items() if v < alvo),
+                      key=lambda par: par[1])
+
+    texto = (
+        f"Meta definida: {formatar_com_precisao(alvo)} por série. "
+        f"{formatar_numero(len(atingiram))} de {formatar_numero(len(series))} "
+        "séries atingiram-na"
+    )
+    texto += f" ({listar(atingiram)})." if atingiram else "."
+
+    if falharam:
+        lista = "; ".join(
+            f"«{n}» com {formatar_com_precisao(v)} "
+            f"({formatar_com_precisao(alvo - v)} abaixo)" for n, v in falharam
+        )
+        texto += f" Abaixo da meta: {lista}."
+    return ("Meta", texto)
+
+
 def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
                    temporal: bool, serie_anual: pd.Series | None
                    ) -> list[tuple[str, str]]:
@@ -1622,7 +1818,8 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
         f"mediana {formatar_numero(float(serie.median()))}."
     )))
 
-    if grafico.get("meta"):
+    # o ambito «serie» e tratado uma vez so, ao nivel do grafico
+    if grafico.get("meta") and grafico["meta"].get("ambito", "total") != "serie":
         blocos.append(secao_meta(serie, grafico))
 
     blocos.append(("Amplitude", (
@@ -1702,6 +1899,70 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
     if serie_anual is not None and len(serie_anual) >= 2:
         blocos.extend(analise_anual(serie_anual))
 
+    return blocos
+
+
+def secao_comparacao_series(series: dict, grafico: dict,
+                            temporal: bool) -> list[tuple[str, str]]:
+    """Compara as series entre si: peso de cada uma e quem cresceu mais."""
+    agregacao = grafico["agregacao"]
+    resumo = {
+        nome: (float(s.mean()) if agregacao == "media" else float(s.sum()))
+        for nome, s in series.items()
+    }
+    total = sum(resumo.values())
+
+    partes = []
+    for nome, valor in resumo.items():
+        peso = f", {formatar_numero(round(valor / total * 100, 1))}%" if total > 0 else ""
+        partes.append(f"«{nome}» {formatar_com_precisao(valor)}{peso}")
+
+    o_que = "média" if agregacao == "media" else "total"
+    texto = (
+        f"{formatar_numero(len(series))} séries de «{grafico['serie']}». "
+        f"Por {o_que}: " + "; ".join(partes) + "."
+    )
+
+    if temporal:
+        crescimentos = {}
+        for nome, s in series.items():
+            valores = [float(v) for v in s.values]
+            if len(valores) >= 2 and valores[0] != 0:
+                crescimentos[nome] = (valores[-1] - valores[0]) / abs(valores[0]) * 100
+        if crescimentos:
+            maior = max(crescimentos, key=crescimentos.get)
+            menor = min(crescimentos, key=crescimentos.get)
+            texto += (
+                f" Do primeiro ao último período, «{maior}» variou "
+                f"{'+' if crescimentos[maior] >= 0 else ''}"
+                f"{formatar_numero(round(crescimentos[maior], 1))}%"
+            )
+            if menor != maior:
+                texto += (
+                    f" e «{menor}» {'+' if crescimentos[menor] >= 0 else ''}"
+                    f"{formatar_numero(round(crescimentos[menor], 1))}%"
+                )
+            texto += "."
+
+    blocos = [("Comparação entre séries", texto)]
+
+    linhas = []
+    for nome, s in series.items():
+        parte = (
+            f"«{nome}»: máximo {formatar_com_precisao(s.max())} em "
+            f"«{formatar_categoria(s.idxmax())}», mínimo "
+            f"{formatar_com_precisao(s.min())} em «{formatar_categoria(s.idxmin())}»"
+        )
+        if temporal and len(s) >= MIN_PERIODOS_REGRESSAO:
+            reta = regressao_linear([float(v) for v in s.values])
+            if reta and reta["r2"] >= R2_AJUSTE_FRACO:
+                parte += (", tendência crescente" if reta["declive"] > 0
+                          else ", tendência decrescente")
+            elif reta:
+                parte += ", tendência indefinida"
+        linhas.append(parte + ".")
+
+    blocos.append(("Por série", " ".join(linhas)))
     return blocos
 
 
@@ -2012,32 +2273,47 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
             documento.add_page_break()
 
         grafico = resultado["grafico"]
-        serie = resultado["serie"]
+        series = resultado["series"]
+        conjunto = resultado["conjunto"]
+        varias = [n for n in series if n != ""]
 
         documento.add_heading(grafico["titulo"], level=1)
         documento.add_picture(str(resultado["imagem"]), width=LARGURA_IMAGEM)
         documento.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-        documento.add_paragraph(frase_descritiva(serie, grafico, resultado["n_linhas"]))
+        documento.add_paragraph(
+            frase_descritiva(conjunto, grafico, resultado["n_linhas"])
+        )
 
         nota = grafico.get("nota")
         if nota:
             paragrafo = documento.add_paragraph()
             paragrafo.add_run(nota).italic = True
 
-        if plano.get("analise", "completa") == "completa":
+        profundidade = plano.get("analise", "completa")
+        if profundidade in ("completa", "detalhada"):
             documento.add_heading("Análise", level=2)
-            blocos = montar_analise(
-                serie, grafico, resultado["n_linhas"],
+            blocos = []
+            if varias:
+                blocos.extend(secao_comparacao_series(
+                    series, grafico, resultado["temporal"]))
+                if (grafico.get("meta")
+                        and grafico["meta"].get("ambito") == "serie"):
+                    blocos.append(secao_meta_por_serie(series, grafico))
+            blocos.extend(montar_analise(
+                conjunto, grafico, resultado["n_linhas"],
                 resultado["temporal"], resultado["serie_anual"],
-            )
-            for etiqueta, texto in blocos:
-                paragrafo = documento.add_paragraph()
-                paragrafo.add_run(f"{etiqueta}. ").bold = True
-                paragrafo.add_run(texto)
+            ))
+            escrever_blocos(documento, blocos)
+
+            if varias and profundidade == "detalhada":
+                for nome, serie in series.items():
+                    documento.add_heading(f"Análise — {nome}", level=2)
+                    escrever_blocos(documento, montar_analise(
+                        serie, grafico, len(serie), resultado["temporal"], None))
 
         if grafico.get("tabela_dados"):
-            acrescentar_tabela(documento, serie, grafico, notas)
+            acrescentar_tabela(documento, conjunto, grafico, notas)
 
     documento.add_page_break()
     documento.add_heading("Notas sobre os dados", level=1)
@@ -2063,6 +2339,13 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
             f"Não consigo escrever «{saida}»: o ficheiro está aberto noutro programa "
             "(provavelmente o Word). Fecha-o e tenta outra vez."
         ) from None
+
+
+def escrever_blocos(documento, blocos: list[tuple[str, str]]) -> None:
+    for etiqueta, texto in blocos:
+        paragrafo = documento.add_paragraph()
+        paragrafo.add_run(f"{etiqueta}. ").bold = True
+        paragrafo.add_run(texto)
 
 
 def acrescentar_tabela(documento, serie: pd.Series, grafico: dict,
@@ -2106,12 +2389,12 @@ def executar(args) -> int:
     preparados = []
 
     for indice, grafico in enumerate(plano["graficos"], start=1):
-        serie, n_linhas, temporal, anual = preparar_dados(
+        series, n_linhas, temporal, anual, conjunto = preparar_dados(
             fonte, grafico, indice, avisos, notas
         )
         preparados.append({
-            "grafico": grafico, "serie": serie, "n_linhas": n_linhas,
-            "temporal": temporal, "serie_anual": anual,
+            "grafico": grafico, "series": series, "conjunto": conjunto,
+            "n_linhas": n_linhas, "temporal": temporal, "serie_anual": anual,
         })
 
     print(f"Plano lido: {len(preparados)} gráfico(s).")
@@ -2142,7 +2425,8 @@ def executar(args) -> int:
     try:
         for posicao, resultado in enumerate(preparados, start=1):
             imagem = pasta_temporaria / f"grafico_{posicao}.png"
-            desenhar(resultado["serie"], resultado["grafico"], imagem)
+            desenhar(resultado["conjunto"], resultado["series"],
+                     resultado["grafico"], imagem)
             resultado["imagem"] = imagem
         montar_documento(plano, preparados, avisos, notas, saida)
     finally:

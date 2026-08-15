@@ -88,9 +88,15 @@ de escrever o plano:
 - **`eixo_temporal`** — só é preciso quando os rótulos são invulgares
   (`Semana 1`, `P1`). Meses em português, trimestres, anos e datas são
   reconhecidos sozinhos.
-- **`analise`**, ao nível do plano — `completa` por omissão. Só pôr `curta` se o
-  utilizador disser que quer apenas o gráfico.
-- **`meta`** — `{"valor": N, "ambito": "total"}` ou `"categoria"`. Se o utilizador
+- **`analise`**, ao nível do plano — `completa` por omissão. `curta` só se o
+  utilizador disser que quer apenas o gráfico. `detalhada` repete a análise
+  inteira para **cada** série: com três canais, o relatório fica cerca de duas
+  vezes e meia mais longo, por isso só a pedido.
+- **`serie`** — a coluna cujos valores dão as séries do gráfico. Sempre que o
+  utilizador falar em **comparar** canais, campanhas, regiões ou lojas ao longo
+  do tempo, é isto que ele quer: um gráfico com várias linhas, não vários
+  gráficos. Três gráficos com escalas diferentes não se comparam a olho.
+- **`meta`** — `{"valor": N, "ambito": "total"}`, `"categoria"` ou `"serie"`. Se o utilizador
   falar em objetivo, meta ou target, perguntar-lhe **qual dos dois âmbitos**:
   «700.000 no trimestre» é `total`; «cada canal tem de trazer 50.000» é
   `categoria`. Adivinhar aqui dá um relatório errado com ar de certo.
