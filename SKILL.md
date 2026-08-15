@@ -31,9 +31,12 @@ anos, traz também os totais ano a ano e a variação interanual.
    utilizador a pede; sem o campo `previsao` não há previsão. E **nunca
    apresentar o valor central sem o intervalo** — um número solto lê-se como
    promessa.
-7. **Nunca avaliar desempenho.** Nada de «bom», «mau», «fraco», «preocupante» ou
-   «excelente» — essas palavras exigem uma meta que o ficheiro Excel não contém,
-   e uma afirmação indefensável é pior do que um relatório curto.
+7. **Nunca avaliar desempenho sem uma meta dada pelo utilizador.** Nada de
+   «bom», «mau», «fraco» ou «preocupante» — essas palavras exigem uma referência
+   que a folha de cálculo não contém. **Se o utilizador der uma meta**, usa-se o
+   campo `meta` e a comparação passa a ser aritmética: quanto foi, contra quanto
+   se queria, e a diferença. **Nunca inventar uma meta** nem sugerir uma «meta
+   razoável»: o número tem de vir dele.
 8. **Nenhuma palavra qualitativa sem uma regra calculada ao lado.** O relatório
    escreve «tendência crescente», «dispersão elevada», «ajuste moderado» — sempre
    com o número **e** o critério à frente. Quem lê pode discordar do critério;
@@ -87,6 +90,10 @@ de escrever o plano:
   reconhecidos sozinhos.
 - **`analise`**, ao nível do plano — `completa` por omissão. Só pôr `curta` se o
   utilizador disser que quer apenas o gráfico.
+- **`meta`** — `{"valor": N, "ambito": "total"}` ou `"categoria"`. Se o utilizador
+  falar em objetivo, meta ou target, perguntar-lhe **qual dos dois âmbitos**:
+  «700.000 no trimestre» é `total`; «cada canal tem de trazer 50.000» é
+  `categoria`. Adivinhar aqui dá um relatório errado com ar de certo.
 - **`previsao`** — número de períodos a prever. **Só quando o utilizador pedir.**
   Se ele pedir uma previsão, vale a pena avisá-lo do que ela pressupõe: que a
   tendência e a sazonalidade se mantêm, e que nada do que está fora do ficheiro

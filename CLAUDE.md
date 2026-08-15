@@ -99,6 +99,13 @@ testes/test_gerar_relatorio.py
   95% — nunca um valor central sozinho. Guardas: 8 períodos, R² ≥ 0,3, horizonte
   até 1/3 da série e no máximo 12. **A previsão não entra no gráfico**: num
   gráfico, uma linha tracejada confunde-se com facto numa captura de ecrã.
+- **Avaliação de desempenho só contra uma meta dada pelo utilizador** (decisão de
+  15/08/2026; antes era «nunca avaliar desempenho»). A limitação nunca foi de
+  pudor: faltava a referência. Campo `meta` com `valor` e `ambito`
+  (`total` ou `categoria`). Sem meta, a secção não aparece. **Nunca inventar uma
+  meta nem sugerir uma «razoável»** — o número vem de fora ou não há avaliação.
+  Mesmo com meta, o relatório diz quanto foi contra quanto se queria, e nunca se
+  o resultado é bom.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.

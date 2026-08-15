@@ -36,8 +36,8 @@ plano, verifica os dados e gera o documento.
 - Não lê `.xls`, o formato antigo do Excel.
 - Não escreve recomendações nem aponta causas.
   [A razão está aqui abaixo](#o-que-continua-de-fora-e-porquê).
-- **Não avalia desempenho** — nunca diz «bom», «fraco» ou «preocupante».
-  [A razão está aqui abaixo](#porque-é-que-não-há-juízos-de-desempenho).
+- Não diz se um resultado é «bom» ou «fraco». Avalia desempenho **só contra uma meta
+  que tu dês** — [a razão está aqui abaixo](#avaliação-face-a-uma-meta).
 - Não inventa dados nem preenche células vazias em silêncio.
 - Não altera o ficheiro Excel de origem.
 - Não aplica um método estatístico quando não há pontos que cheguem — diz que não
@@ -127,6 +127,7 @@ Esta é a referência única. O `SKILL.md` aponta para aqui e não a repete.
 | `coluna_periodo` | não | Coluna com as datas ou os anos, para a quebra ano a ano. Só é preciso quando o `eixo_x` é outra coisa (ex.: gráfico por canal, com a data noutra coluna). |
 | `eixo_temporal` | não | `true`/`false` para forçar ou travar a deteção de linha do tempo. Só é preciso com rótulos invulgares (`Semana 1`, `P1`). |
 | `previsao` | não | Número de períodos a prever. Sem este campo não há previsão. [Ver as guardas](#previsões). |
+| `meta` | não | Objeto `{"valor": N, "ambito": "total"\|"categoria"}`. [Ver como funciona](#avaliação-face-a-uma-meta). |
 
 E, ao nível do plano (fora da lista `graficos`):
 
@@ -296,17 +297,38 @@ Correlação não é causa, e qualquer frase sobre o porquê seria inventada.
 disso está numa folha de cálculo. Uma recomendação sem esse contexto é um palpite com ar
 de conselho.
 
-### Porque é que não há juízos de desempenho
+### Avaliação face a uma meta
 
-O relatório nunca escreve «bom», «fraco», «preocupante» ou «excelente». Não é timidez:
-essas palavras exigem uma **meta ou uma referência que o ficheiro Excel não contém**.
-Dizer que um canal teve «fraco desempenho» sem saber contra que objetivo é uma afirmação
-que não se consegue defender — e um relatório indefensável é pior do que um relatório
-curto.
+O relatório nunca escreve «bom», «fraco» ou «preocupante» por sua conta. Não é timidez:
+essas palavras exigem uma **referência que a folha de cálculo não contém**. Dizer que um
+canal teve «fraco desempenho» sem saber contra que objetivo é uma afirmação que não se
+consegue defender.
 
-O que entra em vez disso é vocabulário técnico com significado fixo: `tendência crescente`,
-`dispersão elevada`, `ajuste moderado`, `valor atípico`. Cada um com o número e o critério
-à frente, para quem lê poder discordar do critério em vez de discordar da opinião.
+A solução não foi proibir a avaliação — foi **exigir a referência**. Dás a meta no plano,
+e a avaliação deixa de ser opinião e passa a ser aritmética:
+
+```json
+"meta": { "valor": 2000000, "ambito": "total" }
+```
+
+| `ambito` | O que compara |
+|---|---|
+| `total` | O total do período (ou a média, se a agregação for `media`) contra a meta. |
+| `categoria` | Cada categoria contra a meta: quantas atingiram, quais ficaram mais longe, e o défice somado. |
+
+Sai assim, do exemplo deste repositório:
+
+> **Meta.** Meta definida: 600.000 por categoria. 2 de 3 categorias atingiram-na (66,7%).
+> Mais distantes da meta: «Loja fisica» com 296.476 (303.524 abaixo). Somando o que faltou
+> a cada uma, o défice total é 303.524. A média por categoria é 686.227, 114,4% da meta.
+
+Repara no que **não** está lá: nenhuma palavra sobre o resultado ser bom ou mau. Diz-se
+quanto foi, contra quanto se queria, e a diferença. O juízo é de quem lê.
+
+Sem `meta`, esta secção não aparece — e o resto do relatório continua a usar só
+vocabulário técnico com significado fixo: `tendência crescente`, `dispersão elevada`,
+`ajuste moderado`, `valor atípico`. Cada um com o número e o critério à frente, para quem
+lê poder discordar do critério em vez de discordar da opinião.
 
 ## Quando é que se recusa a gerar
 

@@ -12,6 +12,7 @@
       "eixo_temporal": true,
       "coluna_periodo": "Periodo",
       "previsao": 6,
+      "meta": { "valor": 2000000, "ambito": "total" },
       "nota": "o pico do fim de cada ano coincide com a campanha de Natal"
     },
     {
@@ -22,6 +23,7 @@
       "agregacao": "soma",
       "titulo": "Valor vendido por canal",
       "coluna_periodo": "Periodo",
+      "meta": { "valor": 600000, "ambito": "categoria" },
       "tabela_dados": true
     },
     {

@@ -40,7 +40,9 @@ AGREGACOES = ("soma", "media", "contagem")
 
 CHAVES_OBRIGATORIAS = ("tipo", "eixo_x", "agregacao", "titulo")
 CHAVES_OPCIONAIS = ("folha", "eixo_y", "nota", "tabela_dados", "linha_cabecalho",
-                    "coluna_periodo", "eixo_temporal", "previsao")
+                    "coluna_periodo", "eixo_temporal", "previsao", "meta")
+
+AMBITOS_META = ("total", "categoria")
 
 # ate onde se procura o cabecalho quando a tabela nao comeca na primeira linha
 MAX_LINHAS_PROCURA_CABECALHO = 25
@@ -466,6 +468,29 @@ def validar_grafico(grafico, indice: int) -> None:
 
     if "eixo_temporal" in grafico and not isinstance(grafico["eixo_temporal"], bool):
         raise ErroDados(f"O campo «eixo_temporal» do {onde} tem de ser true ou false.")
+
+    meta = grafico.get("meta")
+    if meta is not None:
+        if not isinstance(meta, dict):
+            raise ErroDados(
+                f"O campo «meta» do {onde} tem de ser um objeto com «valor» e "
+                "«ambito», por exemplo {\"valor\": 700000, \"ambito\": \"total\"}."
+            )
+        desconhecidas = sorted(set(meta) - {"valor", "ambito"})
+        if desconhecidas:
+            raise ErroDados(
+                f"A «meta» do {onde} tem campos que não existem: "
+                f"{listar(desconhecidas)}. Só há «valor» e «ambito»."
+            )
+        if como_numero(meta.get("valor")) is None:
+            raise ErroDados(f"A «meta» do {onde} precisa de um «valor» numérico.")
+        ambito = meta.get("ambito", "total")
+        if ambito not in AMBITOS_META:
+            raise ErroDados(
+                f"A «meta» do {onde} pede o âmbito «{ambito}», que não existe. "
+                f"Âmbitos disponíveis: {listar(AMBITOS_META)} — «total» compara "
+                "o total do período, «categoria» compara cada categoria."
+            )
 
     previsao = grafico.get("previsao")
     if previsao is not None:
@@ -1546,6 +1571,9 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
         f"mediana {formatar_numero(float(serie.median()))}."
     )))
 
+    if grafico.get("meta"):
+        blocos.append(secao_meta(serie, grafico))
+
     blocos.append(("Amplitude", (
         f"Máximo {formatar_numero(serie.max())} em «{formatar_categoria(serie.idxmax())}»; "
         f"mínimo {formatar_numero(serie.min())} em «{formatar_categoria(serie.idxmin())}». "
@@ -1624,6 +1652,81 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
         blocos.extend(analise_anual(serie_anual))
 
     return blocos
+
+
+def secao_meta(serie: pd.Series, grafico: dict) -> tuple[str, str]:
+    """Compara os dados com a meta que o utilizador deu.
+
+    Esta e a unica seccao que avalia desempenho, e so existe porque a
+    referencia vem de fora: sem meta, «fraco» seria uma opiniao; com meta,
+    «atingiu 91%» e uma conta. Continua sem dizer se o resultado e bom.
+    """
+    meta = grafico["meta"]
+    alvo = como_numero(meta["valor"])
+    ambito = meta.get("ambito", "total")
+    agregacao = grafico["agregacao"]
+
+    if ambito == "total":
+        if agregacao == "media":
+            observado = float(serie.mean())
+            o_que = "A média das categorias"
+        else:
+            observado = float(serie.sum())
+            o_que = "O total"
+
+        if alvo == 0:
+            return ("Meta", (
+                f"{o_que} é {formatar_com_precisao(observado)}, face a uma meta de "
+                "zero. Sem meta positiva não há percentagem a calcular."
+            ))
+
+        percentagem = observado / alvo * 100
+        diferenca = observado - alvo
+        posicao = ("acima da meta" if diferenca > 0
+                   else "abaixo da meta" if diferenca < 0 else "exatamente na meta")
+        texto = (
+            f"Meta definida: {formatar_com_precisao(alvo)}. "
+            f"{o_que} é {formatar_com_precisao(observado)} — "
+            f"{formatar_numero(round(percentagem, 1))}% da meta, "
+            f"{formatar_com_precisao(abs(diferenca))} {posicao}."
+        )
+        return ("Meta", texto)
+
+    # ambito == "categoria"
+    valores = [float(v) for v in serie.values]
+    atingiram = [c for c, v in serie.items() if float(v) >= alvo]
+    falharam = [(c, float(v)) for c, v in serie.items() if float(v) < alvo]
+
+    texto = (
+        f"Meta definida: {formatar_com_precisao(alvo)} por categoria. "
+        f"{formatar_numero(len(atingiram))} de {formatar_numero(len(serie))} "
+        f"categorias atingiram-na "
+        f"({formatar_numero(round(len(atingiram) / len(serie) * 100, 1))}%)."
+    )
+
+    if falharam:
+        piores = sorted(falharam, key=lambda par: par[1])[:3]
+        lista = "; ".join(
+            f"«{formatar_categoria(c)}» com {formatar_com_precisao(v)} "
+            f"({formatar_com_precisao(alvo - v)} abaixo)"
+            for c, v in piores
+        )
+        texto += f" Mais distantes da meta: {lista}."
+        em_falta = sum(alvo - v for _, v in falharam)
+        texto += (
+            f" Somando o que faltou a cada uma, o défice total é "
+            f"{formatar_com_precisao(em_falta)}."
+        )
+    else:
+        texto += " Nenhuma categoria ficou abaixo."
+
+    media = sum(valores) / len(valores)
+    texto += (
+        f" A média por categoria é {formatar_com_precisao(media)}, "
+        f"{formatar_numero(round(media / alvo * 100, 1))}% da meta."
+        if alvo != 0 else ""
+    )
+    return ("Meta", texto)
 
 
 def secao_previsao(serie: pd.Series, pedido: int) -> tuple[str, str]:

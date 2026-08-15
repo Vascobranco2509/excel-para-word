@@ -803,6 +803,100 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
     assert any("ficariam de fora" in a for a in avisos)
 
 
+# -------------------------------------------------------------------- meta
+# A unica seccao que avalia desempenho, e so porque a referencia vem de fora.
+
+
+def serie_simples() -> pd.Series:
+    return pd.Series([100.0, 200.0, 300.0], index=["Janeiro", "Fevereiro", "Marco"])
+
+
+def test_meta_total_abaixo():
+    config = grafico(meta={"valor": 800, "ambito": "total"})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "75%" in texto
+    assert "abaixo da meta" in texto
+    assert "200" in texto  # o que faltou
+
+
+def test_meta_total_acima():
+    config = grafico(meta={"valor": 500, "ambito": "total"})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "120%" in texto
+    assert "acima da meta" in texto
+
+
+def test_meta_total_exata():
+    config = grafico(meta={"valor": 600, "ambito": "total"})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "exatamente na meta" in texto
+
+
+def test_meta_com_media_compara_a_media():
+    config = grafico(agregacao="media", meta={"valor": 200, "ambito": "total"})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "média das categorias" in texto.lower()
+    assert "100%" in texto
+
+
+def test_meta_por_categoria_conta_as_que_atingiram():
+    config = grafico(meta={"valor": 200, "ambito": "categoria"})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "2 de 3" in texto
+    assert "Janeiro" in texto  # a que ficou abaixo
+    assert "défice total é 100" in texto
+
+
+def test_meta_por_categoria_quando_todas_atingem():
+    config = grafico(meta={"valor": 50, "ambito": "categoria"})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "Nenhuma categoria ficou abaixo" in texto
+
+
+def test_meta_ambito_por_omissao_e_o_total():
+    config = grafico(meta={"valor": 600})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "O total" in texto
+
+
+def test_meta_zero_nao_divide_por_zero():
+    config = grafico(meta={"valor": 0, "ambito": "total"})
+    _, texto = gr.secao_meta(serie_simples(), config)
+    assert "meta de zero" in texto
+
+
+def test_meta_entra_na_analise():
+    config = grafico(meta={"valor": 600, "ambito": "total"})
+    blocos = gr.montar_analise(serie_simples(), config, 3, False, None)
+    assert "Meta" in etiquetas(blocos)
+
+
+def test_sem_meta_nao_ha_seccao_meta():
+    blocos = gr.montar_analise(serie_simples(), grafico(), 3, False, None)
+    assert "Meta" not in etiquetas(blocos)
+
+
+def test_meta_continua_sem_juizos_de_valor():
+    """Com meta ha avaliacao, mas continua a ser conta e nao opiniao."""
+    for alvo in (100, 600, 5000):
+        config = grafico(meta={"valor": alvo, "ambito": "total"})
+        _, texto = gr.secao_meta(serie_simples(), config)
+        baixo = texto.lower()
+        for proibida in ("bom", "mau", "fraco", "excelente", "preocupante", "falhou"):
+            assert proibida not in baixo, f"apareceu «{proibida}» com meta {alvo}"
+
+
+def test_meta_mal_formada_e_recusada():
+    with pytest.raises(gr.ErroDados, match="objeto"):
+        gr.validar_grafico(grafico(meta=700000), 1)
+    with pytest.raises(gr.ErroDados, match="valor"):
+        gr.validar_grafico(grafico(meta={"ambito": "total"}), 1)
+    with pytest.raises(gr.ErroDados, match="âmbito"):
+        gr.validar_grafico(grafico(meta={"valor": 10, "ambito": "trimestre"}), 1)
+    with pytest.raises(gr.ErroDados, match="não existem"):
+        gr.validar_grafico(grafico(meta={"valor": 10, "objetivo": "x"}), 1)
+
+
 # ---------------------------------------------------------------- previsao
 
 
