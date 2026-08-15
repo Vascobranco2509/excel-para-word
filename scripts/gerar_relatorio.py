@@ -151,16 +151,27 @@ def formatar_com_precisao(valor) -> str:
     numero = como_numero(valor)
     if numero is None:
         return formatar_numero(valor)
+
     magnitude = abs(numero)
-    if magnitude >= 100:
+    if abs(numero - round(numero)) < 1e-9:
+        # inteiro: 1.214 le-se melhor do que 1.214,00
         casas = 0
     elif magnitude >= 1:
+        # nunca menos de duas casas: cortar centimos fazia o numero impresso
+        # contradizer o veredicto («0 abaixo da meta» com 0,40 de diferenca)
         casas = 2
     elif magnitude >= 0.01:
         casas = 4
     else:
         casas = 6
-    texto = f"{numero:,.{casas}f}".rstrip("0").rstrip(".") if casas else f"{numero:,.0f}"
+
+    texto = f"{numero:,.{casas}f}"
+    if casas:
+        # corta zeros a direita, mas nunca abaixo de duas casas: «0,4000» le-se
+        # mal e «0,4» num valor monetario le-se pior
+        inteiro, _, decimal = texto.partition(".")
+        decimal = decimal.rstrip("0").ljust(2, "0")
+        texto = f"{inteiro}.{decimal}"
     return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
@@ -416,6 +427,18 @@ def ler_plano(caminho: Path) -> dict:
 
     for indice, grafico in enumerate(graficos, start=1):
         validar_grafico(grafico, indice)
+
+    if analise == "curta":
+        # sem isto, a meta e a previsao desapareciam sem uma palavra
+        for indice, grafico in enumerate(graficos, start=1):
+            pedidos = [c for c in ("meta", "previsao") if grafico.get(c)]
+            if pedidos:
+                raise ErroDados(
+                    f"O gráfico {indice} pede {listar(pedidos)}, mas o plano tem "
+                    "«analise»: «curta», que só escreve uma frase por gráfico. "
+                    "Ou tiras esses campos, ou passas a análise a «completa» — "
+                    "ignorá-los em silêncio seria pior."
+                )
     return plano
 
 
@@ -482,8 +505,15 @@ def validar_grafico(grafico, indice: int) -> None:
                 f"A «meta» do {onde} tem campos que não existem: "
                 f"{listar(desconhecidas)}. Só há «valor» e «ambito»."
             )
-        if como_numero(meta.get("valor")) is None:
+        alvo = como_numero(meta.get("valor"))
+        if alvo is None:
             raise ErroDados(f"A «meta» do {onde} precisa de um «valor» numérico.")
+        if alvo < 0:
+            raise ErroDados(
+                f"A «meta» do {onde} é {formatar_com_precisao(alvo)}. Uma meta "
+                "negativa daria percentagens sem sentido (um total positivo "
+                "ficaria com «-60% da meta»). Usa um valor de zero para cima."
+            )
         ambito = meta.get("ambito", "total")
         if ambito not in AMBITOS_META:
             raise ErroDados(
@@ -518,6 +548,9 @@ def validar_grafico(grafico, indice: int) -> None:
 
 class FonteExcel:
     """Le .xlsx e .xlsm. As macros de um .xlsm nunca sao executadas."""
+
+    # o Excel guarda tipos; uma coluna de texto e mesmo uma escolha de quem gravou
+    tudo_texto = False
 
     def __init__(self, caminho: Path):
         try:
@@ -580,6 +613,8 @@ class FonteCSV:
     """
 
     NOME_UNICO = "(ficheiro)"
+    # num CSV nao ha tipos: tudo o que la esta e texto, por definicao
+    tudo_texto = True
 
     def __init__(self, caminho: Path):
         self.notas: list[str] = []
@@ -640,10 +675,10 @@ class FonteCSV:
         if cabecalho is None:
             return tabela.reset_index(drop=True)
         corpo = tabela.iloc[cabecalho + 1:].reset_index(drop=True)
-        corpo.columns = [
+        corpo.columns = nomes_unicos([
             str(c) if pd.notna(c) else f"Unnamed: {i}"
             for i, c in enumerate(tabela.iloc[cabecalho])
-        ]
+        ])
         return corpo
 
     def bruto(self, folha: str, coluna: str, n_linhas: int,
@@ -652,6 +687,25 @@ class FonteCSV:
         if coluna not in corpo.columns or len(corpo) != n_linhas:
             return None
         return [None if pd.isna(v) else v for v in corpo[coluna]]
+
+
+def nomes_unicos(nomes: list[str]) -> list[str]:
+    """Desambigua cabecalhos repetidos, como o pandas ja faz no Excel.
+
+    Exportacoes de plataformas trazem colunas com o mesmo nome a torto e a
+    direito. Sem isto, df[coluna] devolvia um DataFrame em vez de uma coluna e
+    o programa rebentava com um traceback.
+    """
+    vistos: dict[str, int] = {}
+    saida = []
+    for nome in nomes:
+        if nome in vistos:
+            vistos[nome] += 1
+            saida.append(f"{nome}.{vistos[nome]}")
+        else:
+            vistos[nome] = 0
+            saida.append(nome)
+    return saida
 
 
 def detetar_separador(texto: str) -> str:
@@ -701,7 +755,7 @@ def escolher_folha(fonte, grafico: dict, onde: str, notas: list[str]) -> str:
     disponiveis = fonte.folhas
     pedida = grafico.get("folha")
 
-    if isinstance(fonte, FonteCSV):
+    if fonte.tudo_texto:
         if pedida:
             notas.append(
                 f"{grafico['titulo']}: o plano indica a folha «{pedida}», mas um CSV "
@@ -807,11 +861,14 @@ def preparar_dados(fonte, grafico: dict, indice: int,
                 f"O {onde} pede a coluna «{eixo_y}», que não existe {onde_fica(folha)}. "
                 f"Colunas disponíveis: {listar(df.columns)}."
             )
-        df = proteger_de_texto_reinterpretado(
-            df, fonte, folha, eixo_y, onde, avisos, notas, linha_cabecalho,
-            tudo_texto=isinstance(fonte, FonteCSV))
+        if not fonte.tudo_texto:
+            # so faz sentido no Excel: e la que o pandas decide sozinho que o
+            # texto «1.250» vale 1,25. No CSV os valores ja chegam como texto e
+            # passam todos pelo converter_para_numero a seguir.
+            df = proteger_de_texto_reinterpretado(
+                df, fonte, folha, eixo_y, onde, avisos, notas, linha_cabecalho)
         df = converter_para_numero(df, eixo_y, folha, onde, avisos, notas,
-                                   tudo_texto=isinstance(fonte, FonteCSV))
+                                   tudo_texto=fonte.tudo_texto)
         colunas_necessarias = [eixo_x, eixo_y]
     else:
         colunas_necessarias = [eixo_x]
@@ -926,16 +983,13 @@ def calcular_serie_anual(df: pd.DataFrame, grafico: dict, eixo_x: str,
 def proteger_de_texto_reinterpretado(df: pd.DataFrame, fonte,
                                      folha: str, coluna: str, onde: str,
                                      avisos: list[str], notas: list[str],
-                                     linha_cabecalho: int = 0,
-                                     tudo_texto: bool = False) -> pd.DataFrame:
+                                     linha_cabecalho: int = 0) -> pd.DataFrame:
     """Reconverte a coluna a partir das celulas em bruto quando la havia texto.
 
-    So faz alguma coisa se a coluna tiver mesmo celulas de texto com
-    separadores ou simbolos de moeda. Numeros a serio nao passam por aqui.
-
-    Num CSV e tudo texto: a mensagem vai para as notas, a menos que a releitura
-    tenha mudado algum valor. Um aviso que dispara sempre deixa de significar
-    alguma coisa.
+    So para ficheiros Excel: e la que o pandas decide sozinho que o texto
+    «1.250» vale 1,25. So faz alguma coisa se a coluna tiver mesmo celulas de
+    texto com separadores ou simbolos de moeda; numeros a serio nao passam por
+    aqui.
     """
     brutos = fonte.bruto(folha, coluna, len(df), linha_cabecalho)
     if brutos is None:
@@ -969,10 +1023,7 @@ def proteger_de_texto_reinterpretado(df: pd.DataFrame, fonte,
                 "no relatório."
             )
 
-    if tudo_texto and not alterou_significado:
-        acrescentar(notas, mensagem)
-    else:
-        acrescentar(avisos, mensagem)
+    acrescentar(avisos, mensagem)
 
     df = df.copy()
     df[coluna] = convertida

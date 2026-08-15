@@ -803,6 +803,66 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
     assert any("ficariam de fora" in a for a in avisos)
 
 
+# ------------------------------------------------ achados na revisao critica
+# Quatro defeitos encontrados a reler o codigo com desconfianca, depois de
+# escrito. Nenhum deles tinha teste.
+
+
+def test_csv_com_cabecalhos_repetidos_nao_rebenta(tmp_path):
+    """Exportacoes trazem colunas com o mesmo nome; df[coluna] devolvia um
+    DataFrame em vez de uma coluna e saia um traceback."""
+    ficheiro = escrever_csv(tmp_path / "dup.csv", [
+        "Mes;Valor;Valor", "Janeiro;10;99", "Fevereiro;20;99",
+    ])
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert serie.sum() == 30  # ficou com a primeira coluna «Valor»
+
+
+def test_cabecalhos_repetidos_sao_desambiguados():
+    assert gr.nomes_unicos(["a", "b", "a", "a", "b"]) == ["a", "b", "a.1", "a.2", "b.1"]
+
+
+def test_meta_com_analise_curta_e_recusada(tmp_path):
+    """Antes eram ignoradas em silencio: pedias avaliacao e nao recebias nada."""
+    plano = tmp_path / "p.json"
+    plano.write_text(json.dumps({
+        "titulo_relatorio": "T", "analise": "curta",
+        "graficos": [grafico(meta={"valor": 100})],
+    }, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(gr.ErroDados, match="curta"):
+        gr.ler_plano(plano)
+
+
+def test_previsao_com_analise_curta_e_recusada(tmp_path):
+    plano = tmp_path / "p.json"
+    plano.write_text(json.dumps({
+        "titulo_relatorio": "T", "analise": "curta",
+        "graficos": [grafico(previsao=3)],
+    }, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(gr.ErroDados, match="curta"):
+        gr.ler_plano(plano)
+
+
+def test_centimos_nao_desaparecem():
+    """O numero impresso nao pode contradizer o veredicto ao lado."""
+    assert gr.formatar_com_precisao(7745.75) == "7.745,75"
+    assert gr.formatar_com_precisao(0.4) == "0,40"
+    assert gr.formatar_com_precisao(1214) == "1.214"  # inteiro fica inteiro
+    assert gr.formatar_com_precisao(0.000561) == "0,000561"
+
+
+def test_diferenca_pequena_nao_e_impressa_como_zero():
+    serie = pd.Series([100.0, 100.4], index=["a", "b"])
+    config = grafico(meta={"valor": 200, "ambito": "total"})
+    _, texto = gr.secao_meta(serie, config)
+    assert "0,40 acima da meta" in texto
+
+
+def test_meta_negativa_e_recusada():
+    with pytest.raises(gr.ErroDados, match="negativa"):
+        gr.validar_grafico(grafico(meta={"valor": -500}), 1)
+
+
 # -------------------------------------------------------------------- meta
 # A unica seccao que avalia desempenho, e so porque a referencia vem de fora.
 
