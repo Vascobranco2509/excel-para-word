@@ -24,6 +24,8 @@ plano, verifica os dados e gera o documento.
   concentração, valores atípicos, tendência, crescimento médio, sazonalidade e quebra
   **ano a ano** com variação interanual. Tudo calculado a partir da mesma conta que
   desenhou o gráfico.
+- **Prevê os períodos seguintes, se pedires** — sempre com intervalo de confiança, e
+  só quando a série dá garantias para isso.
 - Junta a tabela de dados, se pedires.
 - **Recusa gerar o relatório** quando encontra problemas nos dados, até tu dizeres
   que os aceitas.
@@ -31,7 +33,8 @@ plano, verifica os dados e gera o documento.
 **Não faz, de propósito:**
 
 - Não lê CSV, `.xls` nem `.xlsm`.
-- Não escreve recomendações, causas nem previsões.
+- Não escreve recomendações nem aponta causas.
+  [A razão está aqui abaixo](#o-que-continua-de-fora-e-porquê).
 - **Não avalia desempenho** — nunca diz «bom», «fraco» ou «preocupante».
   [A razão está aqui abaixo](#porque-é-que-não-há-juízos-de-desempenho).
 - Não inventa dados nem preenche células vazias em silêncio.
@@ -122,6 +125,7 @@ Esta é a referência única. O `SKILL.md` aponta para aqui e não a repete.
 | `linha_cabecalho` | não | Número da linha do Excel onde estão os nomes das colunas. Só é preciso quando a deteção automática escolher a linha errada. |
 | `coluna_periodo` | não | Coluna com as datas ou os anos, para a quebra ano a ano. Só é preciso quando o `eixo_x` é outra coisa (ex.: gráfico por canal, com a data noutra coluna). |
 | `eixo_temporal` | não | `true`/`false` para forçar ou travar a deteção de linha do tempo. Só é preciso com rótulos invulgares (`Semana 1`, `P1`). |
+| `previsao` | não | Número de períodos a prever. Sem este campo não há previsão. [Ver as guardas](#previsões). |
 
 E, ao nível do plano (fora da lista `graficos`):
 
@@ -205,6 +209,59 @@ no documento:
 | tendência indefinida | R² < 0,3 |
 | série monótona | todas as variações com o mesmo sinal |
 | concentração baixa / moderada / elevada | maior categoria < 25% / 25–50% / > 50% do total |
+
+### Previsões
+
+Pedes com o campo `previsao` (número de períodos). **Sem esse campo não há previsão** —
+tem de ser pedida, nunca aparece por iniciativa da ferramenta.
+
+**Método.** Decomposição clássica, por esta ordem: dessazonalizar a série (dividir cada
+valor pelo seu índice sazonal), ajustar a reta de tendência sobre a série já sem ciclo,
+extrapolar, e reaplicar o fator sazonal a cada período previsto. Ajustar a reta depois de
+tirar a sazonalidade não é um detalhe: no exemplo deste repositório, o R² sobe de **0,47**
+na série bruta para **0,89** na dessazonalizada. Sem sazonalidade identificável, o método
+é só a reta sobre a série observada — e o relatório diz qual dos dois usou.
+
+**Nunca um número solto.** Cada período sai como intervalo a 95%, calculado com o
+erro-padrão dos resíduos:
+
+```
+ŷ ± t(0,975; n−2) · s · √(1 + 1/n + (x₀ − x̄)² / Sxx)
+```
+
+**Quando é que recusa**, e cada recusa fica escrita no relatório com a razão:
+
+| Condição | Mínimo |
+|---|---|
+| Eixo temporal | obrigatório — prever o «período seguinte» de «Canal» não significa nada |
+| Períodos observados | 8 |
+| Qualidade do ajuste | R² ≥ 0,3 |
+| Horizonte | até 1/3 da série, e nunca mais de 12 períodos |
+
+Também avisa quando a previsão desce abaixo de zero numa série sempre positiva (sinal de
+que a reta deixou de servir) e quando o intervalo é mais largo do que o próprio valor
+previsto.
+
+**A previsão não vai para o gráfico**, de propósito. O gráfico mostra dados; a previsão
+vive no texto. Uma linha tracejada num gráfico é fácil de confundir com facto quando se
+tira uma captura de ecrã.
+
+**O que a previsão não sabe.** Pressupõe que a tendência e a sazonalidade se mantêm. Não
+sabe de campanhas que aí vêm, de concorrentes, de mudanças de preço nem de nada que não
+esteja no ficheiro. É uma extrapolação, não uma bola de cristal — e é assim que está
+escrita no relatório.
+
+### O que continua de fora, e porquê
+
+Duas coisas nunca vão entrar, e não é por falta de vontade:
+
+**Causas.** O ficheiro tem números, não tem o mundo. A ferramenta nunca saberá se as
+vendas subiram por causa da campanha, porque o concorrente fechou ou porque choveu.
+Correlação não é causa, e qualquer frase sobre o porquê seria inventada.
+
+**Recomendações.** Precisam de orçamento, capacidade, calendário e estratégia — nada
+disso está numa folha de cálculo. Uma recomendação sem esse contexto é um palpite com ar
+de conselho.
 
 ### Porque é que não há juízos de desempenho
 

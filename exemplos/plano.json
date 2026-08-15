@@ -11,6 +11,7 @@
       "titulo": "Valor vendido por mês",
       "eixo_temporal": true,
       "coluna_periodo": "Periodo",
+      "previsao": 6,
       "nota": "o pico do fim de cada ano coincide com a campanha de Natal"
     },
     {

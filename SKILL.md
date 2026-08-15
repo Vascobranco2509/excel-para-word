@@ -1,6 +1,6 @@
 ---
 name: excel-para-word
-description: Transforma um ficheiro Excel (.xlsx) num relatório Word (.docx) com gráficos e uma análise estatística de cada um — dispersão, concentração, valores atípicos, tendência, sazonalidade e comparação ano a ano. Usar quando alguém pede um relatório, gráficos, uma análise, uma evolução ou uma comparação entre anos a partir de uma folha de cálculo, ou fala em Excel, xlsx, folha de cálculo, relatório em Word ou docx.
+description: Transforma um ficheiro Excel (.xlsx) num relatório Word (.docx) com gráficos e uma análise estatística de cada um — dispersão, concentração, valores atípicos, tendência, sazonalidade, comparação ano a ano e previsão dos períodos seguintes. Usar quando alguém pede um relatório, gráficos, uma análise, uma evolução, uma previsão ou uma comparação entre anos a partir de uma folha de cálculo, ou fala em Excel, xlsx, folha de cálculo, relatório em Word ou docx.
 ---
 
 # Excel para Word
@@ -24,19 +24,25 @@ anos, traz também os totais ano a ano e a variação interanual.
    própria.
 4. **Nunca perguntar o que está dentro do ficheiro.** Colunas, folhas e número de
    linhas leem-se, não se perguntam.
-5. **Nunca escrever recomendações, causas ou previsões** no relatório.
-6. **Nunca avaliar desempenho.** Nada de «bom», «mau», «fraco», «preocupante» ou
+5. **Nunca escrever recomendações nem apontar causas** no relatório. O ficheiro
+   tem números, não tem o mundo: nunca se saberá se as vendas subiram pela
+   campanha ou porque o concorrente fechou.
+6. **Nunca prever por iniciativa própria.** A previsão só entra quando o
+   utilizador a pede; sem o campo `previsao` não há previsão. E **nunca
+   apresentar o valor central sem o intervalo** — um número solto lê-se como
+   promessa.
+7. **Nunca avaliar desempenho.** Nada de «bom», «mau», «fraco», «preocupante» ou
    «excelente» — essas palavras exigem uma meta que o ficheiro Excel não contém,
    e uma afirmação indefensável é pior do que um relatório curto.
-7. **Nenhuma palavra qualitativa sem uma regra calculada ao lado.** O relatório
+8. **Nenhuma palavra qualitativa sem uma regra calculada ao lado.** O relatório
    escreve «tendência crescente», «dispersão elevada», «ajuste moderado» — sempre
    com o número **e** o critério à frente. Quem lê pode discordar do critério;
    não há opinião com que discordar. Os limiares estão no
    [README](README.md#os-termos-qualitativos-e-a-regra-de-cada-um) e em constantes
    no topo do script. Não inventar limiares novos no meio do código.
-8. **Nunca aplicar um método estatístico sem pontos que cheguem.** O script já
+9. **Nunca aplicar um método estatístico sem pontos que cheguem.** O script já
    trava sozinho e escreve no relatório que não o aplicou, e porquê. Não contornar.
-9. **Nunca dar o trabalho por terminado sem ter verificado o `.docx` gerado.**
+10. **Nunca dar o trabalho por terminado sem ter verificado o `.docx` gerado.**
 
 ## Fluxo de trabalho
 
@@ -74,6 +80,10 @@ de escrever o plano:
   reconhecidos sozinhos.
 - **`analise`**, ao nível do plano — `completa` por omissão. Só pôr `curta` se o
   utilizador disser que quer apenas o gráfico.
+- **`previsao`** — número de períodos a prever. **Só quando o utilizador pedir.**
+  Se ele pedir uma previsão, vale a pena avisá-lo do que ela pressupõe: que a
+  tendência e a sazonalidade se mantêm, e que nada do que está fora do ficheiro
+  entra na conta.
 
 ### 4. Verificar — passo obrigatório
 

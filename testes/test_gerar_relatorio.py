@@ -507,15 +507,17 @@ def test_plano_com_json_invalido_diz_a_linha(tmp_path):
 
 
 def test_regressao_com_reta_perfeita():
-    declive, r2 = gr.regressao_linear([0.0, 2.0, 4.0, 6.0, 8.0])
-    assert declive == pytest.approx(2.0)
-    assert r2 == pytest.approx(1.0)
+    reta = gr.regressao_linear([0.0, 2.0, 4.0, 6.0, 8.0])
+    assert reta["declive"] == pytest.approx(2.0)
+    assert reta["intercecao"] == pytest.approx(0.0)
+    assert reta["r2"] == pytest.approx(1.0)
+    assert reta["erro_padrao"] == pytest.approx(0.0)
 
 
 def test_regressao_com_serie_plana_da_declive_zero():
-    declive, r2 = gr.regressao_linear([5.0, 5.0, 5.0, 5.0])
-    assert declive == pytest.approx(0.0)
-    assert r2 == pytest.approx(1.0)
+    reta = gr.regressao_linear([5.0, 5.0, 5.0, 5.0])
+    assert reta["declive"] == pytest.approx(0.0)
+    assert reta["r2"] == pytest.approx(1.0)
 
 
 def test_regressao_nao_corre_com_poucos_pontos():
@@ -552,6 +554,118 @@ def test_classificacao_usa_os_limiares_documentados():
     assert gr.classificar(14.9, 15, 35, termos) == "baixa"
     assert gr.classificar(20.0, 15, 35, termos) == "moderada"
     assert gr.classificar(35.1, 15, 35, termos) == "elevada"
+
+
+# ---------------------------------------------------------------- previsao
+
+
+def serie_reta(n: int, declive: float = 2.0) -> pd.Series:
+    """Serie perfeitamente linear, com rotulos que nao ativam a sazonalidade."""
+    return pd.Series([declive * i for i in range(n)],
+                     index=[f"P{i}" for i in range(n)])
+
+
+def test_previsao_acerta_em_cheio_numa_reta_sem_ruido():
+    """Sanidade matematica: se falhar aqui, esta errada em todo o lado."""
+    resultado = gr.prever(serie_reta(10), 3)
+    previstos = [p["centro"] for p in resultado["previsoes"]]
+
+    assert previstos == pytest.approx([20.0, 22.0, 24.0])
+    for p in resultado["previsoes"]:
+        assert p["superior"] - p["inferior"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_previsao_traz_sempre_intervalo():
+    serie = pd.Series([10, 13, 11, 18, 21, 19, 26, 30, 28, 35],
+                      index=[f"P{i}" for i in range(10)])
+    resultado = gr.prever(serie, 2)
+    for p in resultado["previsoes"]:
+        assert p["inferior"] < p["centro"] < p["superior"]
+
+
+def test_previsao_recusa_serie_curta():
+    assert gr.prever(serie_reta(5), 2) is None
+
+
+def test_previsao_recusa_ajuste_fraco():
+    """Uma serie sem forma nao se extrapola."""
+    serie = pd.Series([10, 90, 20, 85, 15, 95, 25, 80, 12, 88],
+                      index=[f"P{i}" for i in range(10)])
+    resultado = gr.prever(serie, 2)
+    assert resultado["recusa"] == "ajuste"
+    assert resultado["r2"] < gr.R2_MINIMO_PREVISAO
+
+
+def test_horizonte_limitado_a_um_terco_da_serie():
+    assert gr.horizonte_permitido(9) == 3
+    assert gr.horizonte_permitido(36) == 12
+    assert gr.horizonte_permitido(90) == 12  # travado pelo maximo absoluto
+
+
+def test_seccao_previsao_diz_quando_corta_o_horizonte():
+    _, texto = gr.secao_previsao(serie_reta(12), 99)
+    assert "máximo defensável" in texto
+    assert "ficção" in texto
+
+
+def test_seccao_previsao_explica_a_recusa_por_ajuste():
+    serie = pd.Series([10, 90, 20, 85, 15, 95, 25, 80, 12, 88],
+                      index=[f"P{i}" for i in range(10)])
+    _, texto = gr.secao_previsao(serie, 3)
+    assert "Não calculada" in texto
+    assert "ajuste" in texto
+
+
+def test_seccao_previsao_explica_a_recusa_por_serie_curta():
+    _, texto = gr.secao_previsao(serie_reta(5), 2)
+    assert "pelo menos 8" in texto
+
+
+def test_previsao_avisa_quando_desce_abaixo_de_zero():
+    serie = serie_reta(12, declive=-2.0) + 22  # comeca em 22 e desce ate zero
+    _, texto = gr.secao_previsao(serie, 4)
+    assert "abaixo de zero" in texto
+
+
+def test_eixo_categorico_recusa_previsao():
+    serie = pd.Series([10, 20, 30], index=["Meta", "Google", "TikTok"])
+    blocos = gr.montar_analise(serie, grafico(eixo_x="Canal", previsao=3), 3, False, None)
+    assert "período seguinte" in texto_de(blocos, "Previsão")
+
+
+def test_sem_campo_previsao_nao_ha_seccao_previsao():
+    serie = serie_reta(12)
+    blocos = gr.montar_analise(serie, grafico(), 12, True, None)
+    assert "Previsão" not in etiquetas(blocos)
+
+
+def test_previsao_e_recusada_se_nao_for_inteiro_positivo():
+    with pytest.raises(gr.ErroDados, match="previsao"):
+        gr.validar_grafico(grafico(previsao=0), 1)
+    with pytest.raises(gr.ErroDados, match="previsao"):
+        gr.validar_grafico(grafico(previsao="seis"), 1)
+
+
+# ------------------------------------------------------- rotulos futuros
+
+
+def test_rotulos_futuros_viram_o_ano():
+    rotulos = gr.proximos_rotulos(pd.Index(["2025-10", "2025-11", "2025-12"]), 3)
+    assert rotulos == ["2026-01", "2026-02", "2026-03"]
+
+
+def test_rotulos_futuros_continuam_os_meses():
+    rotulos = gr.proximos_rotulos(pd.Index(["Outubro", "Novembro", "Dezembro"]), 2)
+    assert rotulos == ["Janeiro", "Fevereiro"]
+
+
+def test_rotulos_futuros_continuam_os_anos():
+    assert gr.proximos_rotulos(pd.Index([2023, 2024, 2025]), 2) == ["2026", "2027"]
+
+
+def test_rotulos_futuros_desistem_em_vez_de_inventar():
+    rotulos = gr.proximos_rotulos(pd.Index(["Fase A", "Fase B"]), 2)
+    assert rotulos == ["período +1", "período +2"]
 
 
 # ------------------------------------------------------------ eixo temporal

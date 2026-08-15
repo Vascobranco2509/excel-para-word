@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import sys
@@ -37,7 +38,7 @@ AGREGACOES = ("soma", "media", "contagem")
 
 CHAVES_OBRIGATORIAS = ("tipo", "folha", "eixo_x", "agregacao", "titulo")
 CHAVES_OPCIONAIS = ("eixo_y", "nota", "tabela_dados", "linha_cabecalho",
-                    "coluna_periodo", "eixo_temporal")
+                    "coluna_periodo", "eixo_temporal", "previsao")
 
 # ate onde se procura o cabecalho quando a tabela nao comeca na primeira linha
 MAX_LINHAS_PROCURA_CABECALHO = 25
@@ -58,6 +59,25 @@ MIN_PERIODOS_REGRESSAO = 4
 MIN_PERIODOS_CRESCIMENTO = 3
 MIN_CATEGORIAS_ATIPICOS = 5
 MIN_CICLOS_SAZONALIDADE = 2
+
+# Guardas da previsao. Uma previsao e a afirmacao mais facil de fazer e a mais
+# dificil de defender: sem estes minimos, uma reta forcada sobre pontos
+# dispersos daria numeros com ar de rigor e sem rigor nenhum.
+MIN_PERIODOS_PREVISAO = 8
+R2_MINIMO_PREVISAO = 0.3
+MAX_HORIZONTE_PREVISAO = 12
+FRACAO_MAXIMA_HORIZONTE = 1 / 3
+CONFIANCA_PREVISAO = 95
+
+# t de Student a 95% (bilateral), por graus de liberdade. Acima de 30 usa-se
+# 1,96, que e o limite. Embutida para nao trazer o scipy so por causa disto.
+T_95 = {
+    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+    8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
+    15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+    21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056,
+    27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042,
+}
 
 # Limiares dos termos qualitativos. Cada um aparece no relatorio com o numero E o
 # criterio ao lado: nenhuma palavra qualitativa entra sem regra a sustenta-la.
@@ -439,6 +459,14 @@ def validar_grafico(grafico, indice: int) -> None:
 
     if "eixo_temporal" in grafico and not isinstance(grafico["eixo_temporal"], bool):
         raise ErroDados(f"O campo «eixo_temporal» do {onde} tem de ser true ou false.")
+
+    previsao = grafico.get("previsao")
+    if previsao is not None:
+        if not isinstance(previsao, int) or isinstance(previsao, bool) or previsao < 1:
+            raise ErroDados(
+                f"O campo «previsao» do {onde} tem de ser o número de períodos a "
+                "prever (1, 2, 3…)."
+            )
 
     periodo = grafico.get("coluna_periodo")
     if periodo is not None and (not isinstance(periodo, str) or not periodo.strip()):
@@ -846,8 +874,12 @@ def frase_descritiva(serie: pd.Series, grafico: dict, n_linhas: int) -> str:
 # errado nao se ve a olho como se ve um grafico partido.
 
 
-def regressao_linear(valores: list[float]) -> tuple[float, float] | None:
-    """Minimos quadrados sobre 0, 1, 2... Devolve (declive, r2).
+def regressao_linear(valores: list[float]) -> dict | None:
+    """Minimos quadrados sobre 0, 1, 2...
+
+    Devolve tudo o que a previsao precisa, para nao haver dois sitios a
+    calcular a mesma reta: declive, intercecao, r2, erro-padrao dos residuos,
+    media dos x e soma dos quadrados dos desvios em x.
 
     None quando ha poucos pontos para a reta significar alguma coisa.
     """
@@ -865,11 +897,18 @@ def regressao_linear(valores: list[float]) -> tuple[float, float] | None:
 
     declive = soma_xy / soma_xx
     intercecao = media_y - declive * media_x
-    variacao_total = sum((y - media_y) ** 2 for y in valores)
-    if variacao_total == 0:
-        return declive, 1.0
     residuos = sum((y - (declive * x + intercecao)) ** 2 for x, y in zip(xs, valores))
-    return declive, 1 - residuos / variacao_total
+    variacao_total = sum((y - media_y) ** 2 for y in valores)
+
+    return {
+        "declive": declive,
+        "intercecao": intercecao,
+        "r2": 1.0 if variacao_total == 0 else 1 - residuos / variacao_total,
+        "erro_padrao": math.sqrt(residuos / (n - 2)) if n > 2 else 0.0,
+        "media_x": media_x,
+        "soma_xx": soma_xx,
+        "n": n,
+    }
 
 
 def crescimento_medio(valores: list[float]) -> float | None:
@@ -945,6 +984,123 @@ def indice_sazonal(serie: pd.Series) -> dict | None:
     return {"indices": indices, "ciclos": len(anos)}
 
 
+def valor_t(graus: int) -> float:
+    """t de Student a 95%, bilateral."""
+    if graus <= 0:
+        return T_95[1]
+    return T_95.get(graus, 1.96)
+
+
+def proximos_rotulos(indice, quantos: int) -> list[str]:
+    """Continua a sequencia de rotulos para os periodos a prever.
+
+    Quando nao consegue continuar a sequencia devolve «período +1», «+2»...
+    Inventar um rotulo errado seria pior do que nao ter rotulo nenhum.
+    """
+    ultimo = indice[-1]
+
+    if isinstance(ultimo, pd.Timestamp) and len(indice) >= 2:
+        passo = ultimo - indice[-2]
+        return [(ultimo + passo * (i + 1)).strftime("%d/%m/%Y") for i in range(quantos)]
+
+    texto = str(ultimo)
+    encontrado = re.fullmatch(r"((?:19|20)\d{2})([-/])(\d{1,2})", texto)
+    if encontrado:
+        ano, separador, mes = int(encontrado.group(1)), encontrado.group(2), int(encontrado.group(3))
+        rotulos = []
+        for _ in range(quantos):
+            mes += 1
+            if mes > 12:
+                mes, ano = 1, ano + 1
+            rotulos.append(f"{ano}{separador}{mes:02d}")
+        return rotulos
+
+    if e_ano(ultimo):
+        primeiro = int(como_numero(ultimo))
+        return [str(primeiro + i + 1) for i in range(quantos)]
+
+    numero = numero_do_mes(ultimo)
+    if numero is not None and normalizar(ultimo) in MESES_PT:
+        nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho",
+                 "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        return [nomes[(numero - 1 + i + 1) % 12] for i in range(quantos)]
+
+    return [f"período +{i + 1}" for i in range(quantos)]
+
+
+def prever(serie: pd.Series, horizonte: int) -> dict | None:
+    """Previsao por decomposicao: dessazonaliza, ajusta a reta, extrapola.
+
+    A reta e ajustada sobre a serie JA sem sazonalidade -- ajustar sobre os
+    dados em bruto daria um R2 pior e uma tendencia contaminada pelo ciclo.
+    No fim, o fator sazonal de cada periodo previsto e reaplicado.
+
+    Devolve None quando as guardas nao deixam; quem chama e que escreve a
+    razao no relatorio.
+    """
+    valores = [float(v) for v in serie.values]
+    if len(valores) < MIN_PERIODOS_PREVISAO:
+        return None
+
+    sazonal = indice_sazonal(serie)
+    if sazonal is not None:
+        fatores = [sazonal["indices"].get(numero_do_mes(r), 1.0) for r in serie.index]
+        if any(f <= 0 for f in fatores):
+            sazonal = None
+
+    if sazonal is None:
+        base = valores
+        metodo = "tendência linear sobre a série observada"
+    else:
+        base = [v / f for v, f in zip(valores, fatores)]
+        metodo = ("tendência linear sobre a série dessazonalizada, com o fator "
+                  "sazonal reaplicado a cada período previsto")
+
+    reta = regressao_linear(base)
+    if reta is None or reta["r2"] < R2_MINIMO_PREVISAO:
+        return {"recusa": "ajuste", "r2": None if reta is None else reta["r2"]}
+
+    n = reta["n"]
+    graus = n - 2
+    t = valor_t(graus)
+    rotulos = proximos_rotulos(serie.index, horizonte)
+
+    previsoes = []
+    for passo in range(horizonte):
+        x = n + passo
+        centro = reta["intercecao"] + reta["declive"] * x
+        margem = t * reta["erro_padrao"] * math.sqrt(
+            1 + 1 / n + (x - reta["media_x"]) ** 2 / reta["soma_xx"]
+        )
+        inferior, superior = centro - margem, centro + margem
+
+        if sazonal is not None:
+            proximo_mes = numero_do_mes(rotulos[passo])
+            fator = sazonal["indices"].get(proximo_mes, 1.0)
+            centro, inferior, superior = centro * fator, inferior * fator, superior * fator
+
+        previsoes.append({
+            "rotulo": rotulos[passo],
+            "centro": centro,
+            "inferior": inferior,
+            "superior": superior,
+        })
+
+    return {
+        "previsoes": previsoes,
+        "metodo": metodo,
+        "r2": reta["r2"],
+        "n": n,
+        "sazonal": sazonal is not None,
+    }
+
+
+def horizonte_permitido(n_periodos: int) -> int:
+    """Quantos periodos e defensavel prever a partir de uma serie de n."""
+    return max(1, min(MAX_HORIZONTE_PREVISAO,
+                      int(n_periodos * FRACAO_MAXIMA_HORIZONTE)))
+
+
 def classificar(valor: float, baixo: float, alto: float,
                 termos: tuple[str, str, str]) -> str:
     if valor < baixo:
@@ -964,6 +1120,27 @@ def criterio(baixo: float, alto: float, termos: tuple[str, str, str],
 # ------------------------------------------------------------ eixo temporal
 
 
+def como_numero(valor) -> float | None:
+    """Devolve o valor como float, ou None se nao for numero.
+
+    Existe porque o pandas devolve inteiros do numpy, que nao passam num
+    isinstance(valor, int) do Python. Confiar no isinstance dava falsos
+    negativos silenciosos.
+    """
+    if isinstance(valor, bool) or isinstance(valor, pd.Timestamp):
+        return None
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(numero) else numero
+
+
+def e_ano(valor) -> bool:
+    numero = como_numero(valor)
+    return numero is not None and numero.is_integer() and 1900 <= numero <= 2100
+
+
 def parece_temporal(indice) -> bool:
     """Diz se os rotulos do eixo x sao uma linha do tempo.
 
@@ -977,8 +1154,7 @@ def parece_temporal(indice) -> bool:
 
     if all(isinstance(v, pd.Timestamp) for v in valores):
         return True
-    if all(isinstance(v, (int, float)) and not isinstance(v, bool)
-           and float(v).is_integer() and 1900 <= v <= 2100 for v in valores):
+    if all(e_ano(v) for v in valores):
         return True
 
     textos = [normalizar(v) for v in valores]
@@ -998,9 +1174,9 @@ def extrair_ano(valor):
     """
     if isinstance(valor, pd.Timestamp):
         return int(valor.year)
-    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
-        if float(valor).is_integer() and 1900 <= valor <= 2100:
-            return int(valor)
+    if e_ano(valor):
+        return int(como_numero(valor))
+    if como_numero(valor) is not None:
         return None
     encontrado = re.search(r"\b(19|20)\d{2}\b", str(valor))
     return int(encontrado.group(0)) if encontrado else None
@@ -1086,19 +1262,99 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
             "(método de Tukey, 1,5×IQR)."
         )))
 
+    pedido = grafico.get("previsao")
+
     if temporal:
         blocos.extend(analise_temporal(serie, valores))
+        if pedido:
+            blocos.append(secao_previsao(serie, pedido))
     else:
         blocos.append(("Evolução", (
             f"Não analisada — «{grafico['eixo_x']}» é um eixo categórico, não uma "
             "linha do tempo. Tendências e regressões só têm significado quando a "
             "ordem das categorias é a ordem do tempo."
         )))
+        if pedido:
+            blocos.append(("Previsão", (
+                f"Não calculada — «{grafico['eixo_x']}» é um eixo categórico. Prever o "
+                "período seguinte só faz sentido quando existe um período seguinte."
+            )))
 
     if serie_anual is not None and len(serie_anual) >= 2:
         blocos.extend(analise_anual(serie_anual))
 
     return blocos
+
+
+def secao_previsao(serie: pd.Series, pedido: int) -> tuple[str, str]:
+    """Constroi a seccao Previsao, ou a explicacao de porque nao a ha."""
+    n = len(serie)
+    if n < MIN_PERIODOS_PREVISAO:
+        return ("Previsão", (
+            f"Não calculada — são precisos pelo menos {MIN_PERIODOS_PREVISAO} "
+            f"períodos observados e há {formatar_numero(n)}."
+        ))
+
+    maximo = horizonte_permitido(n)
+    horizonte = min(pedido, maximo)
+    aviso_horizonte = ""
+    if pedido > maximo:
+        aviso_horizonte = (
+            f" Pediste {formatar_numero(pedido)} períodos, mas o máximo defensável "
+            f"para uma série de {formatar_numero(n)} é {formatar_numero(maximo)} "
+            f"(um terço da série, no máximo {MAX_HORIZONTE_PREVISAO}); "
+            "extrapolar mais longe seria ficção."
+        )
+
+    resultado = prever(serie, horizonte)
+    if resultado is None:
+        return ("Previsão", f"Não calculada — série demasiado curta.{aviso_horizonte}")
+
+    if "recusa" in resultado:
+        r2 = resultado["r2"]
+        detalhe = (f"o ajuste da tendência é fraco (R² de {formatar_numero(round(r2, 2))}, "
+                   f"mínimo {formatar_numero(R2_MINIMO_PREVISAO)})"
+                   if r2 is not None else "não foi possível ajustar uma tendência")
+        return ("Previsão", (
+            f"Não calculada — {detalhe}. Extrapolar uma reta que não descreve os "
+            "dados dava um número com ar de rigor e sem rigor nenhum."
+        ))
+
+    linhas = "; ".join(
+        f"{p['rotulo']} entre {formatar_numero(round(p['inferior']))} e "
+        f"{formatar_numero(round(p['superior']))}"
+        for p in resultado["previsoes"]
+    )
+
+    texto = (
+        f"Método: {resultado['metodo']}, ajustada a "
+        f"{formatar_numero(resultado['n'])} períodos (R² de "
+        f"{formatar_numero(round(resultado['r2'], 2))}). "
+        f"Intervalos a {CONFIANCA_PREVISAO}% — {linhas}."
+        f"{aviso_horizonte}"
+    )
+
+    negativas = [p for p in resultado["previsoes"] if p["centro"] < 0]
+    if negativas and all(v >= 0 for v in serie.values):
+        texto += (
+            f" Atenção: {formatar_numero(len(negativas))} período(s) previstos descem "
+            "abaixo de zero, apesar de nenhum valor observado ser negativo — sinal de "
+            "que a reta deixou de ser adequada neste horizonte."
+        )
+
+    largos = [p for p in resultado["previsoes"]
+              if abs(p["centro"]) > 0 and (p["superior"] - p["inferior"]) > abs(p["centro"])]
+    if largos:
+        texto += (
+            f" Em {formatar_numero(len(largos))} período(s) o intervalo é mais largo do "
+            "que o próprio valor previsto: a incerteza é da ordem de grandeza da previsão."
+        )
+
+    texto += (
+        " Pressupõe que a tendência e a sazonalidade observadas se mantêm. Não incorpora "
+        "nada que não esteja no ficheiro."
+    )
+    return ("Previsão", texto)
 
 
 def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, str]]:
@@ -1145,7 +1401,7 @@ def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, 
             f"{MIN_PERIODOS_REGRESSAO} períodos e há {formatar_numero(len(valores))}."
         )))
     else:
-        declive, r2 = resultado
+        declive, r2 = resultado["declive"], resultado["r2"]
         termos = ("fraco", "moderado", "forte")
         ajuste = classificar(r2, R2_AJUSTE_FRACO, R2_AJUSTE_FORTE, termos)
         if r2 < R2_AJUSTE_FRACO:

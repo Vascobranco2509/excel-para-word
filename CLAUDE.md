@@ -92,7 +92,16 @@ testes/test_gerar_relatorio.py
 - **A análise é estatística e completa** (decisão revista em 15/08/2026; antes era
   «só descritiva, sem estatística avançada»). Entra dispersão, concentração,
   atípicos, tendência por regressão, crescimento geométrico, índice sazonal e
-  quebra ano a ano. Continua sem causas, sem previsões e sem recomendações.
+  quebra ano a ano. Continua sem causas e sem recomendações.
+- **Previsões só a pedido** (decisão de 15/08/2026; antes era «sem previsões»).
+  Campo `previsao` no gráfico; sem ele não há previsão. Método: dessazonalizar,
+  ajustar a reta, extrapolar, reaplicar a sazonalidade. Sempre com intervalo a
+  95% — nunca um valor central sozinho. Guardas: 8 períodos, R² ≥ 0,3, horizonte
+  até 1/3 da série e no máximo 12. **A previsão não entra no gráfico**: num
+  gráfico, uma linha tracejada confunde-se com facto numa captura de ecrã.
+- **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
+  não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
+  estão numa folha de cálculo. Não voltar a propor.
 - **A linha que não se atravessa**: nenhuma palavra qualitativa entra sem uma
   regra calculada, e a regra vai escrita ao lado. Nunca «bom», «mau», «fraco» ou
   «preocupante» — essas exigem uma meta que o ficheiro Excel não tem, e uma
