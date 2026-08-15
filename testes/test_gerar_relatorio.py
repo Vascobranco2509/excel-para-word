@@ -822,6 +822,105 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
     assert any("ficariam de fora" in a for a in avisos)
 
 
+# ------------------------------------- achados a usar a skill a serio
+# Apareceram ao seguir o SKILL.md a risca sobre dados publicos reais
+# (casos de covid em Portugal, 782 dias, 93 colunas, formato largo).
+
+
+def test_cabecalho_e_encontrado_com_vazios_na_primeira_linha_de_dados(tmp_path):
+    """A regra antiga comparava com a linha seguinte, e bastava um vazio nessa
+    linha para o cabecalho verdadeiro ser rejeitado. Em dados reais e banal."""
+    ficheiro = escrever_csv(tmp_path / "v.csv", [
+        "Mes;Valor;Extra",
+        "Janeiro;10;",      # a primeira linha de dados tem uma celula vazia
+        "Fevereiro;20;x",
+        "Marco;30;y",
+    ])
+    serie, _, _, _ = preparar(ficheiro, grafico())
+    assert list(serie.index) == ["Janeiro", "Fevereiro", "Marco"]
+    assert serie.sum() == 60
+
+
+def test_lista_de_colunas_da_varias_series(tmp_path):
+    """Formato largo: uma coluna por regiao, como em muitas exportacoes."""
+    ficheiro = escrever_excel(tmp_path / "largo.xlsx", {
+        "Mes": MESES[:3], "norte": [10, 20, 30], "sul": [5, 6, 7],
+    })
+    config = grafico(serie=["norte", "sul"])
+    config.pop("eixo_y")
+    series, _, _, _ = preparar_series(ficheiro, config)
+
+    assert list(series) == ["norte", "sul"]
+    assert series["norte"].sum() == 60
+    assert series["sul"].sum() == 18
+
+
+def test_lista_de_colunas_com_eixo_y_e_recusada():
+    config = grafico(serie=["a", "b"])
+    with pytest.raises(gr.ErroDados, match="tira o «eixo_y»"):
+        gr.validar_grafico(config, 1)
+
+
+def test_lista_de_colunas_precisa_de_duas():
+    config = grafico(serie=["so_uma"])
+    config.pop("eixo_y")
+    with pytest.raises(gr.ErroDados, match="pelo menos dois"):
+        gr.validar_grafico(config, 1)
+
+
+def test_serie_acumulada_e_apanhada(tmp_path):
+    """Somar um acumulado da um numero sem significado, e nada o denunciava."""
+    valores = list(range(1, 31))  # sempre a subir, 30 periodos
+    acumulado = [sum(valores[:i + 1]) for i in range(len(valores))]
+    ficheiro = escrever_excel(tmp_path / "acum.xlsx", {
+        "Mes": [f"2024-{i:02d}" for i in range(1, 31)], "Valor": acumulado,
+    })
+    _, _, avisos, _ = preparar(ficheiro, grafico())
+    assert any("acumulado" in a for a in avisos)
+
+
+def test_serie_curta_a_crescer_nao_e_confundida_com_acumulado(tmp_path):
+    """12 meses sempre a subir sao dados legitimos, nao um acumulado."""
+    ficheiro = escrever_excel(tmp_path / "cresce.xlsx",
+                              {"Mes": MESES, "Valor": list(range(1, 13))})
+    _, _, avisos, _ = preparar(ficheiro, grafico())
+    assert not any("acumulado" in a for a in avisos)
+
+
+def test_serie_sem_descidas_e_monotona_nao_decrescente():
+    """Com zeros pelo meio e zero descidas, «não monótona» estava errado."""
+    serie = pd.Series([10, 10, 20, 20, 30], index=[f"P{i}" for i in range(5)])
+    blocos = gr.montar_analise(serie, grafico(), 5, True, None)
+    texto = texto_de(blocos, "Evolução")
+    assert "não decrescente" in texto
+    assert "não monótona" not in texto
+
+
+def test_lista_de_colunas_em_falta_lista_as_disponiveis(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "largo.xlsx", {
+        "Mes": MESES[:3], "norte": [10, 20, 30], "sul": [5, 6, 7],
+    })
+    config = grafico(serie=["norte", "poente"])
+    config.pop("eixo_y")
+    with pytest.raises(gr.ErroDados) as erro:
+        preparar(ficheiro, config)
+    assert "sul" in str(erro.value)
+
+
+def test_lista_de_colunas_nao_despeja_93_nomes():
+    muitas = [f"coluna_{i}" for i in range(93)]
+    texto = gr.listar_colunas(muitas)
+    assert "e mais 81" in texto
+    assert "coluna_92" not in texto
+
+
+def test_preposicao_certa_na_mensagem():
+    """Saia «não existe do ficheiro»."""
+    assert gr.onde_fica(gr.FonteCSV.NOME_UNICO, "em") == "no ficheiro"
+    assert gr.onde_fica("Vendas", "em") == "na folha «Vendas»"
+    assert gr.onde_fica("Vendas") == "da folha «Vendas»"
+
+
 # --------------------------------------------------------------- series
 # Varias series no mesmo grafico: comparar canais ao longo do tempo.
 

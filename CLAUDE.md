@@ -117,6 +117,17 @@ testes/test_gerar_relatorio.py
   errados, em silêncio. Falta entra como buraco, nunca como zero.
 - **Séries distinguem-se por cor, traço e marca** — o gráfico tem de ler-se
   impresso a preto e branco e por quem não distingue vermelho de verde.
+- **O campo `serie` aceita uma lista de colunas**, para dados em formato largo —
+  uma coluna por região, por mês ou por canal. Descoberto a usar a skill sobre
+  dados públicos reais: sem isto, «comparar por região» era impossível num
+  ficheiro que traz as regiões em colunas separadas, que é o caso comum.
+- **Séries acumuladas são detetadas e avisadas.** Uma coluna que nunca desce ao
+  longo de 24 ou mais períodos parece um acumulado, e somá-la dá um número sem
+  significado. O limite é 24 de propósito: com 12, uma série legítima a crescer
+  todos os meses era acusada, e os próprios testes apanharam o falso positivo.
+- **A linha de cabeçalho é a mais preenchida, não a que tem a seguinte igual.**
+  A regra antiga rejeitava o cabeçalho verdadeiro assim que a primeira linha de
+  dados tivesse uma célula vazia — banal em dados reais.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.

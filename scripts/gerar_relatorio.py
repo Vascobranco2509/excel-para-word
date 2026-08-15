@@ -46,9 +46,15 @@ CHAVES_OPCIONAIS = ("folha", "eixo_y", "nota", "tabela_dados", "linha_cabecalho"
 AMBITOS_META = ("total", "categoria", "serie")
 # acima disto as linhas confundem-se umas com as outras
 MAX_SERIES = 6
+# 24 periodos sem UMA unica descida e raro em dados verdadeiros; 12 nao e.
+# Com o limite em 12, uma serie legitima a crescer todos os meses era acusada
+# de ser um acumulado -- falso positivo apanhado pelos proprios testes.
+MIN_PERIODOS_ACUMULADO = 24
 
 # ate onde se procura o cabecalho quando a tabela nao comeca na primeira linha
 MAX_LINHAS_PROCURA_CABECALHO = 25
+# nomes de coluna listados numa mensagem de erro; 93 numa linha nao se leem
+MAX_COLUNAS_LISTADAS = 12
 
 MAX_LINHAS_TABELA = 30
 MAX_FATIAS_CIRCULAR = 12
@@ -196,11 +202,26 @@ def listar(itens) -> str:
     return ", ".join(f"«{item}»" for item in itens)
 
 
-def onde_fica(folha: str) -> str:
-    """«da folha X» num Excel, «do ficheiro» num CSV, que nao tem folhas."""
+def onde_fica(folha: str, preposicao: str = "de") -> str:
+    """«da folha X» num Excel, «do ficheiro» num CSV, que nao tem folhas.
+
+    A preposicao muda com a frase: «a coluna X da folha Y», mas «não existe
+    NA folha Y». Sem isto saia «não existe do ficheiro».
+    """
+    contracoes = {"de": ("do", "da"), "em": ("no", "na")}
+    ficheiro, pasta = contracoes[preposicao]
     if folha == FonteCSV.NOME_UNICO:
-        return "do ficheiro"
-    return f"da folha «{folha}»"
+        return f"{ficheiro} ficheiro"
+    return f"{pasta} folha «{folha}»"
+
+
+def listar_colunas(colunas) -> str:
+    """Lista as colunas, mas nao despeja 93 nomes numa linha so."""
+    nomes = [str(c) for c in colunas]
+    if len(nomes) <= MAX_COLUNAS_LISTADAS:
+        return listar(nomes)
+    restantes = len(nomes) - MAX_COLUNAS_LISTADAS
+    return f"{listar(nomes[:MAX_COLUNAS_LISTADAS])} e mais {restantes}"
 
 
 def acrescentar(avisos: list[str], mensagem: str) -> None:
@@ -272,25 +293,35 @@ def detetar_linha_cabecalho(fonte, folha: str) -> int:
     cima da tabela. Sem isto, o titulo era lido como cabecalho e as colunas
     ficavam todas «Unnamed».
 
-    O cabecalho e a primeira linha com pelo menos duas celulas, todas de
-    texto, seguida de uma linha igualmente preenchida. Se nada servir,
-    devolve 0 -- o comportamento de sempre.
+    O cabecalho e a PRIMEIRA linha, com pelo menos duas celulas e todas de
+    texto, que esteja tao preenchida como a mais preenchida da amostra. Uma
+    linha de titulo tem uma celula ou duas; o cabecalho tem a largura da
+    tabela.
+
+    A regra anterior comparava com a linha seguinte, e bastava a primeira
+    linha de dados ter uma celula vazia para o cabecalho verdadeiro ser
+    rejeitado -- encontrado com dados reais, onde isso e banal.
+
+    Se nada servir, devolve 0: o comportamento de sempre.
     """
     try:
         amostra = fonte.ler(folha, cabecalho=None,
                             nrows=MAX_LINHAS_PROCURA_CABECALHO)
     except Exception:
         return 0
+    if amostra.empty:
+        return 0
 
-    for indice in range(len(amostra) - 1):
-        linha = amostra.iloc[indice]
-        preenchidas = linha.dropna()
-        if len(preenchidas) < 2:
+    larguras = [len(amostra.iloc[i].dropna()) for i in range(len(amostra))]
+    maxima = max(larguras, default=0)
+    if maxima < 2:
+        return 0
+
+    for indice, largura in enumerate(larguras):
+        if largura < maxima:
             continue
-        if not all(isinstance(v, str) for v in preenchidas):
-            continue
-        seguinte = amostra.iloc[indice + 1].dropna()
-        if len(seguinte) >= len(preenchidas):
+        preenchidas = amostra.iloc[indice].dropna()
+        if all(isinstance(v, str) for v in preenchidas):
             return indice
     return 0
 
@@ -473,10 +504,12 @@ def validar_grafico(grafico, indice: int) -> None:
             f"O {onde} pede a agregação «{grafico['agregacao']}», que não existe. "
             f"Agregações disponíveis: {listar(AGREGACOES)}."
         )
-    if grafico["agregacao"] != "contagem" and not grafico.get("eixo_y"):
+    if (grafico["agregacao"] != "contagem" and not grafico.get("eixo_y")
+            and not isinstance(grafico.get("serie"), list)):
         raise ErroDados(
             f"O {onde} usa a agregação «{grafico['agregacao']}» e por isso "
-            "precisa de «eixo_y» (a coluna com os números)."
+            "precisa de «eixo_y» (a coluna com os números), ou de «serie» como "
+            "lista de colunas."
         )
 
     nota = grafico.get("nota")
@@ -547,12 +580,26 @@ def validar_grafico(grafico, indice: int) -> None:
             )
 
     coluna_serie = grafico.get("serie")
-    if coluna_serie is not None and (not isinstance(coluna_serie, str)
-                                     or not coluna_serie.strip()):
-        raise ErroDados(
-            f"O campo «serie» do {onde} tem de ser o nome da coluna cujos valores "
-            "dão as séries do gráfico (ex.: «Canal»)."
-        )
+    if coluna_serie is not None:
+        if isinstance(coluna_serie, list):
+            if len(coluna_serie) < 2 or not all(
+                    isinstance(c, str) and c.strip() for c in coluna_serie):
+                raise ErroDados(
+                    f"O campo «serie» do {onde} é uma lista de colunas e precisa "
+                    "de pelo menos dois nomes de coluna."
+                )
+            if grafico.get("eixo_y"):
+                raise ErroDados(
+                    f"O {onde} dá «serie» como lista de colunas e também «eixo_y». "
+                    "Com uma lista, cada coluna já é os valores de uma série — "
+                    "tira o «eixo_y»."
+                )
+        elif not isinstance(coluna_serie, str) or not coluna_serie.strip():
+            raise ErroDados(
+                f"O campo «serie» do {onde} tem de ser o nome da coluna cujos valores "
+                "dão as séries (ex.: «Canal»), ou uma lista de colunas quando cada "
+                "categoria está na sua própria coluna."
+            )
 
     periodo = grafico.get("coluna_periodo")
     if periodo is not None and (not isinstance(periodo, str) or not periodo.strip()):
@@ -833,7 +880,7 @@ def reconhecer_datas(df: pd.DataFrame, coluna: str, onde: str,
 
     df = df.copy()
     df[coluna] = convertidas
-    notas.append(f"A coluna «{coluna}» foi reconhecida como datas.")
+    acrescentar(notas, f"A coluna «{coluna}» foi reconhecida como datas.")
     return df
 
 
@@ -845,6 +892,86 @@ def agregar(df: pd.DataFrame, eixo_x: str, eixo_y: str | None,
     grupo = df.groupby(eixo_x, sort=False)[eixo_y]
     return {"soma": grupo.sum, "media": grupo.mean,
             "contagem": grupo.count}[agregacao]()
+
+
+def series_de_colunas(df: pd.DataFrame, grafico: dict, eixo_x: str,
+                      agregacao: str, folha: str, onde: str,
+                      avisos: list[str]) -> dict:
+    """Series a partir de VARIAS COLUNAS, para dados em formato largo.
+
+    Muita folha real tem uma coluna por regiao, por mes ou por canal, em vez
+    de uma coluna com o nome da categoria. Encontrado com dados publicos
+    reais: sem isto, «comparar por regiao» era simplesmente impossivel.
+    """
+    colunas = grafico["serie"]
+    em_falta = [c for c in colunas if c not in df.columns]
+    if em_falta:
+        raise ErroDados(
+            f"O {onde} pede as colunas {listar(em_falta)} como séries, e não "
+            f"existem {onde_fica(folha, 'em')}. "
+            f"Colunas disponíveis: {listar_colunas(df.columns)}."
+        )
+    if eixo_x in colunas:
+        raise ErroDados(
+            f"O {onde} usa «{eixo_x}» como eixo x e também como série. "
+            "Uma coluna não pode ser as duas coisas."
+        )
+
+    series = {}
+    for nome in colunas:
+        limpo = df.dropna(subset=[nome])
+        if limpo.empty:
+            acrescentar(avisos, (
+                f"A coluna «{nome}» não tem valor nenhum preenchido; "
+                "essa série ficou de fora."
+            ))
+            continue
+        agregada = agregar(limpo, eixo_x, nome, agregacao)
+        if not agregada.empty:
+            series[str(nome)] = agregada
+
+    if len(series) < 2:
+        raise ErroDados(
+            f"O {onde} pede séries a partir de colunas, mas sobrou "
+            f"{len(series)}. São precisas pelo menos duas para haver comparação."
+        )
+    if len(series) > MAX_SERIES:
+        acrescentar(avisos, (
+            f"{grafico['titulo']}: são {len(series)} séries no mesmo gráfico. "
+            f"Acima de {MAX_SERIES} as linhas confundem-se umas com as outras."
+        ))
+    return series
+
+
+def detetar_acumulado(serie: pd.Series, grafico: dict, agregacao: str,
+                      avisos: list[str]) -> None:
+    """Avisa quando a serie parece um acumulado e se esta a soma-la.
+
+    Encontrado com dados publicos reais de casos acumulados: o relatorio dizia
+    «o total é 720.849.837» quando o total verdadeiro era 5.372.111. Somar uma
+    coluna acumulada da um numero sem significado nenhum -- e nao ha erro
+    nenhum a denuncia-lo, so um numero absurdo com ar de conta certa.
+
+    O sinal: uma serie longa que nunca desce.
+    """
+    if agregacao != "soma" or len(serie) < MIN_PERIODOS_ACUMULADO:
+        return
+    valores = [float(v) for v in serie.values]
+    if any(b < a for a, b in zip(valores, valores[1:])):
+        return
+    if valores[-1] <= valores[0]:
+        return
+
+    coluna = grafico.get("eixo_y")
+    qual = f"a coluna «{coluna}»" if coluna and coluna != "_conjunto" else "esta série"
+    acrescentar(avisos, (
+        f"{grafico['titulo']}: {qual} nunca desce ao "
+        f"longo de {formatar_numero(len(serie))} períodos — parece um valor "
+        "acumulado. Somar um acumulado dá um número sem significado "
+        f"({formatar_com_precisao(sum(valores))} em vez de "
+        f"{formatar_com_precisao(valores[-1])}). Se for esse o caso, usa o valor "
+        "do último período, ou uma coluna com os valores de cada período."
+    ))
 
 
 def separar_series(df: pd.DataFrame, grafico: dict, eixo_x: str,
@@ -860,10 +987,13 @@ def separar_series(df: pd.DataFrame, grafico: dict, eixo_x: str,
     if not coluna:
         return {"": agregar(df, eixo_x, eixo_y, agregacao)}
 
+    if isinstance(coluna, list):
+        return series_de_colunas(df, grafico, eixo_x, agregacao, folha, onde, avisos)
+
     if coluna not in df.columns:
         raise ErroDados(
             f"O {onde} pede «{coluna}» como coluna das séries, que não existe "
-            f"{onde_fica(folha)}. Colunas disponíveis: {listar(df.columns)}."
+            f"{onde_fica(folha, 'em')}. Colunas disponíveis: {listar_colunas(df.columns)}."
         )
     if coluna == eixo_x:
         raise ErroDados(
@@ -952,8 +1082,8 @@ def preparar_dados(fonte, grafico: dict, indice: int,
     eixo_x = grafico["eixo_x"]
     if eixo_x not in df.columns:
         raise ErroDados(
-            f"O {onde} pede a coluna «{eixo_x}», que não existe {onde_fica(folha)}. "
-            f"Colunas disponíveis: {listar(df.columns)}."
+            f"O {onde} pede a coluna «{eixo_x}», que não existe {onde_fica(folha, 'em')}. "
+            f"Colunas disponíveis: {listar_colunas(df.columns)}."
         )
 
     df = reconhecer_datas(df, eixo_x, onde, notas)
@@ -961,11 +1091,28 @@ def preparar_dados(fonte, grafico: dict, indice: int,
     agregacao = grafico["agregacao"]
     eixo_y = grafico.get("eixo_y")
 
-    if eixo_y is not None:
+    if isinstance(grafico.get("serie"), list):
+        # formato largo: cada coluna da lista e uma serie. Converte-se cada uma,
+        # e o conjunto passa a ser a combinacao delas linha a linha.
+        for coluna in grafico["serie"]:
+            if coluna not in df.columns:
+                raise ErroDados(
+                    f"O {onde} pede a coluna «{coluna}» como série, que não existe "
+                    f"{onde_fica(folha, 'em')}. "
+                    f"Colunas disponíveis: {listar_colunas(df.columns)}."
+                )
+            df = converter_para_numero(df, coluna, folha, onde, avisos, notas,
+                                       tudo_texto=fonte.tudo_texto)
+        eixo_y = "_conjunto"
+        combinar = df[grafico["serie"]]
+        df = df.copy()
+        df[eixo_y] = combinar.mean(axis=1) if agregacao == "media" else combinar.sum(axis=1)
+        colunas_necessarias = [eixo_x]
+    elif eixo_y is not None:
         if eixo_y not in df.columns:
             raise ErroDados(
-                f"O {onde} pede a coluna «{eixo_y}», que não existe {onde_fica(folha)}. "
-                f"Colunas disponíveis: {listar(df.columns)}."
+                f"O {onde} pede a coluna «{eixo_y}», que não existe {onde_fica(folha, 'em')}. "
+                f"Colunas disponíveis: {listar_colunas(df.columns)}."
             )
         if not fonte.tudo_texto:
             # so faz sentido no Excel: e la que o pandas decide sozinho que o
@@ -1003,6 +1150,7 @@ def preparar_dados(fonte, grafico: dict, indice: int,
                             onde, avisos, notas)
 
     detetar_linha_de_total(serie, grafico, avisos)
+    detetar_acumulado(serie, grafico, agregacao, avisos)
 
     temporal = grafico.get("eixo_temporal")
     if temporal is None:
@@ -1065,8 +1213,8 @@ def calcular_serie_anual(df: pd.DataFrame, grafico: dict, eixo_x: str,
     if coluna not in df.columns:
         raise ErroDados(
             f"O gráfico «{grafico['titulo']}» pede «{coluna}» como coluna de "
-            f"períodos, mas essa coluna não existe {onde_fica(folha)}. "
-            f"Colunas disponíveis: {listar(df.columns)}."
+            f"períodos, mas essa coluna não existe {onde_fica(folha, 'em')}. "
+            f"Colunas disponíveis: {listar_colunas(df.columns)}."
         )
 
     anos = df[coluna].map(extrair_ano)
@@ -1233,7 +1381,7 @@ def desenhar(serie: pd.Series, series: dict, grafico: dict, destino: Path) -> No
     if tipo in ("barras", "linhas"):
         eixos.set_axisbelow(True)
         eixos.set_xlabel(str(grafico["eixo_x"]))
-        eixos.set_ylabel(str(grafico.get("eixo_y") or "Registos"))
+        eixos.set_ylabel(rotulo_do_eixo_y(grafico))
         eixos.yaxis.set_major_formatter(
             matplotlib.ticker.FuncFormatter(lambda v, _: formatar_numero(v))
         )
@@ -1245,6 +1393,19 @@ def desenhar(serie: pd.Series, series: dict, grafico: dict, destino: Path) -> No
 
 
 MAX_ROTULOS_LEGIVEIS = 15
+# acima disto as marcas fundem-se numa faixa grossa e escondem a linha
+MAX_MARCAS_LEGIVEIS = 40
+
+
+def rotulo_do_eixo_y(grafico: dict) -> str:
+    """O que se escreve no eixo y.
+
+    Com series a partir de varias colunas nao ha uma coluna de valores: dizer
+    «Registos» seria errado, porque nao sao contagens de registos.
+    """
+    if isinstance(grafico.get("serie"), list):
+        return ""
+    return str(grafico.get("eixo_y") or "Registos")
 
 # cores e tracos distinguiveis tambem a preto e branco e por quem nao distingue
 # vermelho de verde: a forma do traco identifica a serie, nao so a cor
@@ -1268,7 +1429,9 @@ def desenhar_series(eixos, series: dict, categorias, rotulos: list[str],
             eixos.plot(rotulos, alinhar(series[nome], categorias), label=nome,
                        linewidth=2, color=CORES[posicao % len(CORES)],
                        linestyle=TRACOS[posicao % len(TRACOS)],
-                       marker=MARCAS[posicao % len(MARCAS)], markersize=4)
+                       marker=(MARCAS[posicao % len(MARCAS)]
+                               if len(rotulos) <= MAX_MARCAS_LEGIVEIS else None),
+                       markersize=4)
         eixos.grid(linestyle=":", alpha=0.6)
     else:  # barras agrupadas
         largura = 0.8 / len(nomes)
@@ -1918,8 +2081,10 @@ def secao_comparacao_series(series: dict, grafico: dict,
         partes.append(f"«{nome}» {formatar_com_precisao(valor)}{peso}")
 
     o_que = "média" if agregacao == "media" else "total"
+    origem = ("uma por coluna" if isinstance(grafico["serie"], list)
+              else f"de «{grafico['serie']}»")
     texto = (
-        f"{formatar_numero(len(series))} séries de «{grafico['serie']}». "
+        f"{formatar_numero(len(series))} séries, {origem}. "
         f"Por {o_que}: " + "; ".join(partes) + "."
     )
 
@@ -2132,8 +2297,16 @@ def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, 
         f" Das {formatar_numero(len(diferencas))} variações período a período, "
         f"{formatar_numero(subidas)} positivas e {formatar_numero(descidas)} negativas"
     )
-    if diferencas and (subidas == len(diferencas) or descidas == len(diferencas)):
-        texto += " — série monótona."
+    # os zeros contam: uma serie com subidas e patamares, sem descidas, e
+    # monotona nao decrescente. Chamar-lhe «nao monotona» era errado.
+    if not diferencas:
+        pass
+    elif descidas == 0 and subidas:
+        texto += (" — série monótona crescente." if subidas == len(diferencas)
+                  else " — série monótona não decrescente (há períodos iguais).")
+    elif subidas == 0 and descidas:
+        texto += (" — série monótona decrescente." if descidas == len(diferencas)
+                  else " — série monótona não crescente (há períodos iguais).")
     else:
         texto += " — série não monótona."
 

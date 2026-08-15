@@ -5,9 +5,9 @@ description: Transforma um ficheiro Excel ou CSV (.xlsx, .xlsm, .csv) num relat�
 
 # Excel para Word
 
-Recebe um `.xlsx` e instruções em linguagem natural; devolve um `.docx` com um
-gráfico por página, cada um com título, descrição com números reais, um bloco de
-análise estatística e, opcionalmente, a tabela de dados.
+Recebe um `.xlsx`, `.xlsm` ou `.csv` e instruções em linguagem natural; devolve um
+`.docx` com um gráfico por página, cada um com título, descrição com números
+reais, um bloco de análise estatística e, opcionalmente, a tabela de dados.
 
 O bloco **Análise** traz âmbito, amplitude, dispersão, concentração, valores
 atípicos e — quando o eixo é uma linha do tempo — evolução, tendência por
@@ -57,12 +57,38 @@ Ler o ficheiro antes de falar sobre ele. Para Excel (`.xlsx`, `.xlsm`):
 python -c "import pandas as pd; x=pd.ExcelFile('DADOS.xlsx'); print(x.sheet_names); [print(f, x.parse(f).dtypes, sep='\n') for f in x.sheet_names]"
 ```
 
-Para CSV — ver as primeiras linhas em bruto **antes** de o interpretar, porque é
-aí que se vê o separador e as linhas de metadados por cima da tabela:
+Para CSV, dois passos. Primeiro as linhas em bruto, para ver o **separador** e as
+linhas de metadados por cima da tabela:
 
 ```bash
-python -c "print(open('DADOS.csv', encoding='utf-8', errors='replace').read()[:600])"
+python -c "print(open('DADOS.csv', encoding='utf-8', errors='replace').read()[:400])"
 ```
+
+Depois a **forma do ficheiro**. Um CSV real tem dezenas de colunas e os 400
+caracteres acima nem chegam ao fim do cabeçalho:
+
+```bash
+python -c "
+l=open('DADOS.csv',encoding='utf-8',errors='replace').read().splitlines()
+s=';' if l[0].count(';')>l[0].count(',') else ','
+print('linhas:',len(l)-1,'colunas:',len(l[0].split(s)))
+print('colunas:',l[0].split(s))
+print('exemplo:',l[1].split(s))"
+```
+
+### 1b. Ver a forma dos dados antes de prometer o que quer que seja
+
+Antes de escolher colunas, decidir **em que formato estão os dados**, porque isso
+muda tudo:
+
+| Forma | Como se reconhece | O que fazer |
+|---|---|---|
+| **Longo** | Uma coluna com o nome da categoria (`Canal`) e outra com os valores (`Valor`) | `serie: "Canal"` |
+| **Largo** | Uma coluna por categoria (`vendas_norte`, `vendas_sul`, `vendas_centro`) | `serie: ["vendas_norte", "vendas_sul", ...]`, **sem `eixo_y`** |
+
+O formato largo é muito comum em exportações e em folhas feitas à mão. **Não
+tentar reorganizar o ficheiro**: a skill lê os dois, e alterar o original está
+proibido pela regra 1.
 
 ### 2. Confirmar o pedido
 
@@ -92,10 +118,14 @@ de escrever o plano:
   utilizador disser que quer apenas o gráfico. `detalhada` repete a análise
   inteira para **cada** série: com três canais, o relatório fica cerca de duas
   vezes e meia mais longo, por isso só a pedido.
-- **`serie`** — a coluna cujos valores dão as séries do gráfico. Sempre que o
-  utilizador falar em **comparar** canais, campanhas, regiões ou lojas ao longo
-  do tempo, é isto que ele quer: um gráfico com várias linhas, não vários
+- **`serie`** — sempre que o utilizador falar em **comparar** canais, campanhas,
+  regiões ou lojas, é isto que ele quer: um gráfico com várias linhas, não vários
   gráficos. Três gráficos com escalas diferentes não se comparam a olho.
+  Aceita duas formas, conforme a forma dos dados (ver o passo 1b):
+  `"serie": "Canal"` quando há uma coluna com o nome da categoria;
+  `"serie": ["vendas_norte", "vendas_sul"]` quando cada categoria tem a sua
+  própria coluna — e nesse caso **não se dá `eixo_y`**, porque cada coluna já é
+  os valores de uma série.
 - **`meta`** — `{"valor": N, "ambito": "total"}`, `"categoria"` ou `"serie"`. Se o utilizador
   falar em objetivo, meta ou target, perguntar-lhe **qual dos dois âmbitos**:
   «700.000 no trimestre» é `total`; «cada canal tem de trazer 50.000» é
@@ -123,6 +153,12 @@ utilizador**. Depois **esperar pela resposta dele**. Exemplos de tradução:
 | parece ser linha de totais | «A folha tem uma linha TOTAL no fim. Se ficar, o gráfico conta os valores duas vezes. Quer que apague essa linha?» |
 | não começa na primeira linha | «A tabela começa na linha N, por causa do título por cima. Usei essa — está certo?» |
 | números gravados como texto | «Os valores estão como texto no Excel, com o símbolo de euro. Consegui lê-los, mas convém confirmar dois ou três.» |
+| parece um valor acumulado | «Esta coluna nunca desce — parece um acumulado. Se for, somá-la dá um número sem sentido: o total daria X quando o valor real é Y. Quer que use antes o último período?» |
+| séries no mesmo gráfico | «Seriam N linhas no mesmo gráfico e iam confundir-se. Quer que fique só com as principais?» |
+| categorias … ilegíveis | «O gráfico ficaria com N barras, finas demais para se lerem. Quer agrupar, ou usar outra coluna?» |
+| a tabela … ficariam de fora | «A tabela só mostra as primeiras 30 de N categorias. Quer assim, ou sem tabela?» |
+| não é possível saber (datas) | «As datas estão em texto e nenhum dia passa de 12, portanto não dá para saber se é dia/mês ou mês/dia. Vou tratá-las como texto — sem tendência nem sazonalidade.» |
+| Previsão não calculada | «Não dá para prever com confiança: [a razão que o script deu]. Prefiro dizer isso a inventar um número.» |
 
 ### 5. Gerar
 

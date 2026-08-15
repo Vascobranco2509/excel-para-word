@@ -201,11 +201,23 @@ Um índice sazonal com os meses trocados estaria errado com ar de certo.
 
 ## Várias séries no mesmo gráfico
 
-O campo `serie` diz qual é a coluna cujos valores passam a ser as séries:
+O campo `serie` aceita duas formas, conforme a forma dos dados.
+
+**Formato longo** — uma coluna com o nome da categoria e outra com os valores:
 
 ```json
 { "tipo": "linhas", "eixo_x": "Periodo", "eixo_y": "Valor",
   "serie": "Canal", "agregacao": "soma", "titulo": "Valor por canal" }
+```
+
+**Formato largo** — cada categoria na sua própria coluna, como em quase todas as
+exportações e nas folhas feitas à mão. Aqui `serie` é a **lista das colunas**, e
+**não se dá `eixo_y`**, porque cada coluna já é os valores de uma série:
+
+```json
+{ "tipo": "linhas", "eixo_x": "data",
+  "serie": ["vendas_norte", "vendas_centro", "vendas_sul"],
+  "agregacao": "soma", "titulo": "Vendas por região" }
 ```
 
 As séries ficam com **cores, traços e marcas diferentes** — o gráfico continua a ler-se
@@ -366,6 +378,9 @@ O script analisa sempre os dados antes de gerar. Se encontrar algum destes casos
 - a tabela não começar na primeira linha da folha;
 - um gráfico de barras com mais de 40 categorias — as barras ficam finas como cabelos;
 - uma tabela de dados com mais de 30 categorias, que seria truncada;
+- uma coluna que **nunca desce ao longo de 24 ou mais períodos** — parece um valor
+  acumulado, e somar um acumulado dá um número sem significado (num caso real de teste,
+  1.531.289.090 em vez dos 15.537.056 verdadeiros);
 - uma categoria que parece ser a **linha de totais** da folha (`TOTAL`, `Soma`,
   `Total Geral`, ou a última categoria a valer exatamente a soma das outras) —
   se passasse, o gráfico contaria os mesmos valores duas vezes;
