@@ -31,6 +31,8 @@ plano, verifica os dados e gera o documento.
 - **Prevê os períodos seguintes, se pedires** — sempre com intervalo de confiança, e
   só quando a série dá garantias para isso.
 - Junta a tabela de dados, se pedires.
+- Monta o documento como um relatório: **página de rosto** com o título, a data e o
+  ficheiro de origem, **índice** dos gráficos e **numeração das páginas** no rodapé.
 - **Recusa gerar o relatório** quando encontra problemas nos dados, até tu dizeres
   que os aceitas.
 

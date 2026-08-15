@@ -128,6 +128,11 @@ testes/test_gerar_relatorio.py
 - **A linha de cabeçalho é a mais preenchida, não a que tem a seguinte igual.**
   A regra antiga rejeitava o cabeçalho verdadeiro assim que a primeira linha de
   dados tivesse uma célula vazia — banal em dados reais.
+- **O documento tem página de rosto, índice e numeração de páginas** (decisão de
+  16/08/2026; antes estava fora de âmbito). A capa não é numerada. O índice é
+  uma lista simples, **não um campo de índice do Word**: esse aparece vazio até
+  alguém carregar em «atualizar», e um índice em branco é pior do que nenhum.
+  A captura do README mostra a primeira página **com gráfico**, não a capa.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.
@@ -196,4 +201,4 @@ testes/test_gerar_relatorio.py
 ## 8. Fora de âmbito até alguém sentir a falta
 
 `barras_horizontais`, `area`, `dispersao`, células combinadas, filtros por
-coluna, numeração de páginas, saída em PDF ou PowerPoint.
+coluna (um gráfico por região), saída em PDF ou PowerPoint.

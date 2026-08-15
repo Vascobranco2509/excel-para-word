@@ -822,6 +822,62 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
     assert any("ficariam de fora" in a for a in avisos)
 
 
+# ------------------------------------------------ capa, indice e paginas
+
+
+def gerar_para_ler(tmp_path: Path, graficos: list[dict], **plano_extra):
+    """Gera um documento e devolve-o aberto, para inspecionar."""
+    from docx import Document
+
+    ficheiro = escrever_excel(tmp_path / "d.xlsx",
+                              {"Mes": MESES[:3], "Valor": [10, 20, 30]})
+    plano = tmp_path / "p.json"
+    corpo = {"titulo_relatorio": "Relatório de teste", "graficos": graficos}
+    corpo.update(plano_extra)
+    plano.write_text(json.dumps(corpo, ensure_ascii=False), encoding="utf-8")
+    saida = tmp_path / "r.docx"
+    correr_cli("--dados", str(ficheiro), "--plano", str(plano), "--saida", str(saida))
+    return Document(str(saida))
+
+
+def test_capa_traz_titulo_data_e_origem(tmp_path):
+    import datetime
+
+    documento = gerar_para_ler(tmp_path, [grafico()])
+    texto = "\n".join(p.text for p in documento.paragraphs)
+
+    assert "Relatório de teste" in texto
+    assert datetime.date.today().strftime("%d/%m/%Y") in texto
+    assert "d.xlsx" in texto
+
+
+def test_indice_lista_todos_os_graficos(tmp_path):
+    documento = gerar_para_ler(tmp_path, [
+        grafico(titulo="Primeiro"), grafico(titulo="Segundo"),
+    ])
+    texto = "\n".join(p.text for p in documento.paragraphs)
+
+    assert "Índice" in texto
+    assert "1.  Primeiro" in texto
+    assert "2.  Segundo" in texto
+
+
+def test_rodape_tem_numero_de_pagina(tmp_path):
+    documento = gerar_para_ler(tmp_path, [grafico()])
+    seccao = documento.sections[0]
+
+    assert seccao.different_first_page_header_footer is True, "a capa não devia ser numerada"
+    assert "PAGE" in seccao.footer.paragraphs[0]._p.xml
+
+
+def test_capa_nao_conta_como_grafico(tmp_path):
+    """A capa e o indice nao podem trazer imagens nem mexer nos numeros."""
+    documento = gerar_para_ler(tmp_path, [grafico()])
+    assert len(documento.inline_shapes) == 1
+    texto = "\n".join(p.text for p in documento.paragraphs)
+    assert "O total é 60." in texto
+
+
 # ------------------------------------- achados a usar a skill a serio
 # Apareceram ao seguir o SKILL.md a risca sobre dados publicos reais
 # (casos de covid em Portugal, 782 dias, 93 colunas, formato largo).

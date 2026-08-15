@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime
 import io
 import json
 import math
@@ -33,6 +34,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 
 TIPOS_GRAFICO = ("barras", "linhas", "circular")
@@ -2437,13 +2440,16 @@ def analise_anual(serie_anual: pd.Series) -> list[tuple[str, str]]:
 
 
 def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
-                     notas: list[str], saida: Path) -> None:
+                     notas: list[str], saida: Path,
+                     origem: Path | None = None) -> None:
     documento = Document()
-    documento.add_heading(plano["titulo_relatorio"], level=0)
+    numerar_paginas(documento)
+    pagina_de_rosto(documento, plano, origem)
+    documento.add_page_break()
+    indice(documento, resultados)
 
-    for posicao, resultado in enumerate(resultados):
-        if posicao > 0:
-            documento.add_page_break()
+    for resultado in resultados:
+        documento.add_page_break()
 
         grafico = resultado["grafico"]
         series = resultado["series"]
@@ -2512,6 +2518,69 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
             f"Não consigo escrever «{saida}»: o ficheiro está aberto noutro programa "
             "(provavelmente o Word). Fecha-o e tenta outra vez."
         ) from None
+
+
+def pagina_de_rosto(documento, plano: dict, origem: Path | None) -> None:
+    """Titulo, data e ficheiro de origem, numa pagina so."""
+    for _ in range(4):  # empurra o titulo para baixo do topo da folha
+        documento.add_paragraph()
+
+    titulo = documento.add_paragraph()
+    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    corrida = titulo.add_run(plano["titulo_relatorio"])
+    corrida.bold = True
+    corrida.font.size = Pt(28)
+
+    data = documento.add_paragraph()
+    data.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    hoje = datetime.date.today().strftime("%d/%m/%Y")
+    corrida = data.add_run(f"Relatório gerado em {hoje}")
+    corrida.font.size = Pt(11)
+
+    if origem is not None:
+        fonte = documento.add_paragraph()
+        fonte.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        corrida = fonte.add_run(f"A partir de {origem.name}")
+        corrida.italic = True
+        corrida.font.size = Pt(10)
+
+
+def indice(documento, resultados: list[dict]) -> None:
+    """Lista dos graficos, pela ordem em que aparecem.
+
+    Sem numeros de pagina de proposito: um indice a serio do Word e um campo
+    que aparece vazio ate alguem carregar em «atualizar». Uma lista simples
+    esta sempre certa.
+    """
+    documento.add_heading("Índice", level=1)
+    for posicao, resultado in enumerate(resultados, start=1):
+        # numero OU marca, nunca os dois: «• 1. Titulo» le-se mal
+        documento.add_paragraph(f"{posicao}.  {resultado['grafico']['titulo']}")
+
+
+def numerar_paginas(documento) -> None:
+    """Numero de pagina no rodape, centrado.
+
+    O python-docx nao tem isto pronto: mete-se o campo PAGE a mao no XML.
+    A capa fica sem numero (primeira pagina diferente).
+    """
+    seccao = documento.sections[0]
+    seccao.different_first_page_header_footer = True
+
+    paragrafo = seccao.footer.paragraphs[0]
+    paragrafo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    corrida = paragrafo.add_run()
+    corrida.font.size = Pt(9)
+
+    abrir = OxmlElement("w:fldChar")
+    abrir.set(qn("w:fldCharType"), "begin")
+    instrucao = OxmlElement("w:instrText")
+    instrucao.set(qn("xml:space"), "preserve")
+    instrucao.text = "PAGE"
+    fechar = OxmlElement("w:fldChar")
+    fechar.set(qn("w:fldCharType"), "end")
+    for elemento in (abrir, instrucao, fechar):
+        corrida._r.append(elemento)
 
 
 def escrever_blocos(documento, blocos: list[tuple[str, str]]) -> None:
@@ -2601,7 +2670,8 @@ def executar(args) -> int:
             desenhar(resultado["conjunto"], resultado["series"],
                      resultado["grafico"], imagem)
             resultado["imagem"] = imagem
-        montar_documento(plano, preparados, avisos, notas, saida)
+        montar_documento(plano, preparados, avisos, notas, saida,
+                         origem=Path(args.dados))
     finally:
         shutil.rmtree(pasta_temporaria, ignore_errors=True)
 
