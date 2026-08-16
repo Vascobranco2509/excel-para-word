@@ -2910,6 +2910,203 @@ def acrescentar_tabela(documento, serie: pd.Series, grafico: dict,
 
 
 MAX_AMOSTRA = 5
+MAX_SUGESTOES = 6
+# uma coluna com um valor diferente por linha e um identificador, nao uma medida
+PALAVRAS_DE_IDENTIFICADOR = ("id", "codigo", "código", "ref", "referencia",
+                             "referência", "nif", "iban", "email", "telefone")
+
+
+def classificar_coluna(df: pd.DataFrame, nome: str) -> dict:
+    """Diz o que uma coluna e: linha do tempo, numero, categoria ou identificador."""
+    valores = df[nome].dropna()
+    distintos = int(valores.nunique())
+    ficha = {"nome": nome, "distintos": distintos, "tipo": "categoria"}
+
+    if distintos == 0:
+        ficha["tipo"] = "vazia"
+        return ficha
+
+    # A linha do tempo vem PRIMEIRO. Numa serie diaria cada data e unica por
+    # definicao, e a regra do identificador (um valor por linha) matava
+    # exatamente a coluna mais valiosa do ficheiro -- encontrado com dados reais.
+    distintos_valores = valores.drop_duplicates()
+    if parece_temporal(pd.Index(distintos_valores)):
+        ficha["tipo"] = "tempo"
+        return ficha
+    # datas em texto («26-02-2020») nao sao apanhadas pelo parece_temporal:
+    # quem as reconhece e o converter_datas_texto, o mesmo que o resto usa
+    try:
+        if converter_datas_texto(list(distintos_valores), "", nome) is not None:
+            ficha["tipo"] = "tempo"
+            return ficha
+    except ErroDados:
+        pass
+
+    palavras = normalizar(nome).replace("_", " ").split()
+    if any(p in PALAVRAS_DE_IDENTIFICADOR for p in palavras):
+        ficha["tipo"] = "identificador"
+        return ficha
+
+    # Saber se e numero VEM ANTES da regra do identificador: num CSV e tudo
+    # texto, e «todos distintos e nao numerica» disparava em qualquer coluna
+    # de numeros vinda de um CSV -- encontrado pelos proprios testes.
+    e_numero = pd.api.types.is_numeric_dtype(valores)
+    if not e_numero:
+        try:
+            convertida, _ = converter_texto_formatado(valores, "", nome)
+            e_numero = convertida.notna().sum() >= len(valores) * 0.9
+        except ErroDados:
+            e_numero = False
+    if e_numero:
+        ficha["tipo"] = "numero"
+        return ficha
+
+    # um valor diferente por linha, em muitas linhas: e uma etiqueta, nao uma medida
+    if len(df) > 5 and distintos == len(valores):
+        ficha["tipo"] = "identificador"
+        return ficha
+
+    if distintos > max(50, len(df) * 0.5):
+        ficha["tipo"] = "texto"  # texto livre: notas, descricoes
+    return ficha
+
+
+def sugerir_graficos(fonte, caminho: Path) -> list[str]:
+    """Le o ficheiro e propoe graficos que fazem sentido com aquelas colunas.
+
+    Cada sugestao diz PORQUE foi sugerida. Sem isso sao palpites; com isso,
+    quem le pode discordar da regra.
+    """
+    linhas = [f"Li {caminho.name}."]
+    sugestoes = []
+
+    for folha in fonte.folhas:
+        cabecalho = detetar_linha_cabecalho(fonte, folha)
+        try:
+            df = fonte.ler(folha, cabecalho=cabecalho)
+        except Exception:
+            continue
+        if df.empty:
+            continue
+
+        fichas = [classificar_coluna(df, c) for c in df.columns
+                  if not str(c).startswith("Unnamed:")]
+        uteis = [f for f in fichas if f["tipo"] not in ("vazia", "identificador", "texto")]
+
+        onde = f" (folha «{folha}»)" if len(fonte.folhas) > 1 else ""
+        linhas.append(
+            f"\n{formatar_numero(len(df))} linhas{onde}. Colunas que dão para usar:"
+        )
+        for ficha in uteis[:MAX_COLUNAS_LISTADAS]:
+            descricao = {"tempo": "linha do tempo", "numero": "número",
+                         "categoria": "categoria"}[ficha["tipo"]]
+            contagem = ("" if ficha["tipo"] == "numero"
+                        else f", {formatar_numero(ficha['distintos'])} valores")
+            linhas.append(f"  · {ficha['nome']} — {descricao}{contagem}")
+        if len(uteis) > MAX_COLUNAS_LISTADAS:
+            # 80 colunas numa lista nao se leem
+            linhas.append(
+                f"  · … e mais {formatar_numero(len(uteis) - MAX_COLUNAS_LISTADAS)} "
+                "colunas de números"
+            )
+
+        ignoradas = [f["nome"] for f in fichas if f["tipo"] in ("identificador", "texto")]
+        if ignoradas:
+            linhas.append(
+                f"  (deixei de fora {listar_colunas(ignoradas)}: parecem "
+                "identificadores ou texto livre, não medidas)"
+            )
+
+        sugestoes.extend(propor(uteis, folha, len(fonte.folhas) > 1, df))
+
+    if not sugestoes:
+        linhas.append(
+            "\nNão encontrei colunas que dessem um gráfico com sentido. "
+            "É preciso, no mínimo, uma coluna de categorias ou de datas e uma "
+            "coluna de números."
+        )
+        return linhas
+
+    linhas.append("\nSugestões:")
+    for posicao, (titulo, razao) in enumerate(sugestoes[:MAX_SUGESTOES], start=1):
+        linhas.append(f"  {posicao}. {titulo}")
+        linhas.append(f"     porquê: {razao}")
+    linhas.append("\nDiz quais queres e eu escrevo o plano.")
+    return linhas
+
+
+def escolher_par_de_numeros(numeros: list[dict]) -> tuple[str, str] | None:
+    """Escolhe duas colunas de numeros que valha a pena cruzar.
+
+    Evita pares em que uma coluna e parte da outra -- «confirmados» contra
+    «confirmados_arsnorte» da correlacao quase perfeita por construcao, e nao
+    diz nada a ninguem. Encontrado com dados reais.
+    """
+    if len(numeros) < 2:
+        return None
+    nomes = [f["nome"] for f in numeros]
+    for primeiro in range(len(nomes)):
+        for segundo in range(primeiro + 1, len(nomes)):
+            a, b = normalizar(nomes[primeiro]), normalizar(nomes[segundo])
+            if a.startswith(b) or b.startswith(a):
+                continue
+            return nomes[primeiro], nomes[segundo]
+    return None
+
+
+def propor(uteis: list[dict], folha: str, varias_folhas: bool,
+           df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Regras que transformam a forma das colunas em graficos concretos."""
+    tempos = [f for f in uteis if f["tipo"] == "tempo"]
+    numeros = [f for f in uteis if f["tipo"] == "numero"]
+    categorias = [f for f in uteis if f["tipo"] == "categoria"]
+    poucas = [f for f in categorias if 2 <= f["distintos"] <= MAX_SERIES]
+    sugestoes = []
+
+    if tempos and numeros:
+        t, n = tempos[0]["nome"], numeros[0]["nome"]
+        sugestoes.append((
+            f"Evolução de {nome_legivel(n)} ao longo de {nome_legivel(t)} — linhas",
+            "há uma coluna de datas e uma de números",
+        ))
+        if poucas:
+            c = poucas[0]["nome"]
+            sugestoes.append((
+                f"{nome_legivel(n)} por {nome_legivel(c)} ao longo de "
+                f"{nome_legivel(t)} — linhas, {poucas[0]['distintos']} séries",
+                f"«{c}» tem só {poucas[0]['distintos']} valores, dá para comparar "
+                "no mesmo gráfico",
+            ))
+
+    if categorias and numeros:
+        c, n = categorias[0], numeros[0]["nome"]
+        comprido = max((len(str(v)) for v in df[c["nome"]].dropna().unique()[:50]),
+                       default=0) > 20
+        tipo = "barras horizontais" if comprido else "barras"
+        razao = ("os nomes são compridos e não cabem por baixo de barras em pé"
+                 if comprido else
+                 f"«{c['nome']}» tem {formatar_numero(c['distintos'])} categorias")
+        sugestoes.append((
+            f"{nome_legivel(n)} por {nome_legivel(c['nome'])} — {tipo}", razao))
+
+        if 2 <= c["distintos"] <= MAX_FATIAS_CIRCULAR:
+            sugestoes.append((
+                f"Peso de cada {nome_legivel(c['nome'])} no total de "
+                f"{nome_legivel(n)} — circular",
+                f"{c['distintos']} categorias, um circular ainda se lê",
+            ))
+
+    par = escolher_par_de_numeros(numeros)
+    if par:
+        a, b = par
+        sugestoes.append((
+            f"Relação entre {nome_legivel(a)} e {nome_legivel(b)} — dispersão",
+            "são duas colunas de números; mostra se andam juntas",
+        ))
+
+    if varias_folhas:
+        sugestoes = [(f"{t} (folha «{folha}»)", r) for t, r in sugestoes]
+    return sugestoes
 
 
 def descrever_graficos(preparados: list[dict]) -> list[str]:
@@ -2985,6 +3182,12 @@ def descrever_graficos(preparados: list[dict]) -> list[str]:
 
 
 def executar(args) -> int:
+    if args.sugerir:
+        caminho = Path(args.dados)
+        for linha in sugerir_graficos(abrir_dados(caminho), caminho):
+            print(linha)
+        return 0
+
     plano = ler_plano(Path(args.plano))
     fonte = abrir_dados(Path(args.dados))
 
@@ -3054,8 +3257,13 @@ def main() -> int:
     analisador = argparse.ArgumentParser(
         description="Gera um relatório Word com gráficos a partir de um Excel."
     )
-    analisador.add_argument("--dados", required=True, help="ficheiro .xlsx de origem")
-    analisador.add_argument("--plano", required=True, help="ficheiro plano.json")
+    analisador.add_argument("--dados", required=True,
+                            help="ficheiro .xlsx, .xlsm ou .csv de origem")
+    analisador.add_argument("--plano", help="ficheiro plano.json")
+    analisador.add_argument(
+        "--sugerir", action="store_true",
+        help="lê o ficheiro e propõe gráficos que fazem sentido, sem plano nenhum",
+    )
     analisador.add_argument("--saida", help="ficheiro .docx a criar")
     analisador.add_argument(
         "--verificar", action="store_true",
@@ -3067,8 +3275,13 @@ def main() -> int:
     )
     args = analisador.parse_args()
 
-    if not args.verificar and not args.saida:
-        analisador.error("é preciso --saida (ou usa --verificar para só analisar).")
+    if not args.sugerir:
+        if not args.plano:
+            analisador.error(
+                "é preciso --plano (ou usa --sugerir para ver o que dá para fazer)."
+            )
+        if not args.verificar and not args.saida:
+            analisador.error("é preciso --saida (ou usa --verificar para só analisar).")
 
     try:
         return executar(args)

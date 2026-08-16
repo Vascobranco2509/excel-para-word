@@ -76,6 +76,18 @@ print('colunas:',l[0].split(s))
 print('exemplo:',l[1].split(s))"
 ```
 
+**Se o utilizador não souber o que quer** — «faz-me um relatório disto» e nada mais
+— correr primeiro:
+
+```bash
+python scripts/gerar_relatorio.py --dados DADOS.xlsx --sugerir
+```
+
+Lê o ficheiro e devolve uma lista de gráficos possíveis, cada um com a razão.
+**Mostrar essa lista ao utilizador e deixá-lo escolher**, em vez de escolher por
+ele. As sugestões são um ponto de partida, não uma decisão: se ele quiser outra
+coisa, é a dele que vale.
+
 ### 1b. Ver a forma dos dados antes de prometer o que quer que seja
 
 Antes de escolher colunas, decidir **em que formato estão os dados**, porque isso

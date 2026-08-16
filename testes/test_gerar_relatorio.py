@@ -822,6 +822,97 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
     assert any("ficariam de fora" in a for a in avisos)
 
 
+# ------------------------------------------------------ sugerir graficos
+
+
+def sugerir(caminho: Path) -> str:
+    return correr_cli("--dados", str(caminho), "--sugerir").stdout
+
+
+def ficheiro_tipico(tmp_path: Path) -> Path:
+    return escrever_excel(tmp_path / "s.xlsx", {
+        "Periodo": [f"2024-{m:02d}" for m in range(1, 7)] * 2,
+        "Canal": ["Online"] * 6 + ["Loja"] * 6,
+        "Valor": list(range(100, 220, 10)),
+        "Encomendas": list(range(10, 22)),
+    })
+
+
+def test_sugere_os_graficos_obvios(tmp_path):
+    saida = sugerir(ficheiro_tipico(tmp_path))
+
+    assert "Evolução de Valor ao longo de Periodo" in saida
+    assert "séries" in saida            # comparar canais no mesmo grafico
+    assert "circular" in saida          # 2 canais, cabe num circular
+    assert "dispersão" in saida         # Valor e Encomendas
+
+
+def test_cada_sugestao_diz_porque(tmp_path):
+    """Sem a razao sao palpites; com ela, da para discordar da regra."""
+    saida = sugerir(ficheiro_tipico(tmp_path))
+    assert saida.count("porquê:") >= 3
+
+
+def test_coluna_de_datas_nao_e_confundida_com_identificador(tmp_path):
+    """Numa serie diaria cada data e unica: a regra do identificador matava
+    exatamente a coluna mais valiosa. Apanhado com dados reais."""
+    ficheiro = escrever_csv(tmp_path / "d.csv", ["data;valor"] + [
+        f"{dia:02d}-01-2025;{dia}" for dia in range(1, 21)
+    ])
+    saida = sugerir(ficheiro)
+    assert "data — linha do tempo" in saida
+    assert "Evolução" in saida
+
+
+def test_identificadores_ficam_de_fora(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "i.xlsx", {
+        "id_cliente": list(range(1, 11)),
+        "Regiao": ["Norte", "Sul"] * 5,
+        "Valor": list(range(10, 20)),
+    })
+    saida = sugerir(ficheiro)
+    assert "deixei de fora" in saida
+    assert "id_cliente" in saida.split("Sugestões")[0]
+
+
+def test_nao_cruza_um_total_com_uma_parte_dele():
+    """«confirmados» contra «confirmados_arsnorte» da correlacao por construcao."""
+    numeros = [{"nome": "confirmados"}, {"nome": "confirmados_arsnorte"}]
+    assert gr.escolher_par_de_numeros(numeros) is None
+
+    numeros.append({"nome": "recuperados"})
+    assert gr.escolher_par_de_numeros(numeros) == ("confirmados", "recuperados")
+
+
+def test_lista_de_colunas_nao_enche_o_ecra(tmp_path):
+    dados = {"Mes": MESES}
+    for i in range(40):
+        dados[f"medida_{i}"] = list(range(12))
+    ficheiro = escrever_excel(tmp_path / "muitas.xlsx", dados)
+    saida = sugerir(ficheiro)
+    assert "e mais" in saida
+    assert saida.count("— número") <= gr.MAX_COLUNAS_LISTADAS
+
+
+def test_ficheiro_sem_nada_para_desenhar_diz_isso(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "vazio.xlsx", {
+        "notas": [f"comentário livre número {i}" for i in range(60)],
+    })
+    saida = sugerir(ficheiro)
+    assert "Não encontrei colunas" in saida
+
+
+def test_sugerir_nao_precisa_de_plano(tmp_path):
+    resultado = correr_cli("--dados", str(ficheiro_tipico(tmp_path)), "--sugerir")
+    assert resultado.returncode == 0
+
+
+def test_sem_plano_e_sem_sugerir_explica_o_que_falta(tmp_path):
+    resultado = correr_cli("--dados", str(ficheiro_tipico(tmp_path)))
+    assert resultado.returncode != 0
+    assert "--sugerir" in resultado.stderr
+
+
 # --------------------------------------------- nomes de coluna legiveis
 
 

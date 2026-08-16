@@ -419,6 +419,41 @@ vocabulário técnico com significado fixo: `tendência crescente`, `dispersão 
 `ajuste moderado`, `valor atípico`. Cada um com o número e o critério à frente, para quem
 lê poder discordar do critério em vez de discordar da opinião.
 
+## Não sabes o que pedir? Pergunta ao ficheiro
+
+```bash
+python scripts/gerar_relatorio.py --dados X.xlsx --sugerir
+```
+
+Sem plano nenhum. Lê o ficheiro, classifica cada coluna e propõe:
+
+```
+108 linhas. Colunas que dão para usar:
+  · Periodo — linha do tempo, 36 valores
+  · Canal — categoria, 3 valores
+  · Valor — número
+  · Encomendas — número
+
+Sugestões:
+  1. Evolução de Valor ao longo de Periodo — linhas
+     porquê: há uma coluna de datas e uma de números
+  2. Valor por Canal ao longo de Periodo — linhas, 3 séries
+     porquê: «Canal» tem só 3 valores, dá para comparar no mesmo gráfico
+  3. Peso de cada Canal no total de Valor — circular
+     porquê: 3 categorias, um circular ainda se lê
+  4. Relação entre Valor e Encomendas — dispersão
+     porquê: são duas colunas de números; mostra se andam juntas
+```
+
+**Cada sugestão diz porquê.** Sem a razão são palpites; com ela, podes discordar da regra.
+
+**O que fica de fora:** colunas que parecem identificadores (`id_cliente`, `nif`) ou texto
+livre. Não são medidas — somá-las não quer dizer nada.
+
+**E o que não faz:** cruzar um total com uma parte dele. `confirmados` contra
+`confirmados_norte` daria correlação quase perfeita por construção, e não diria nada a
+ninguém.
+
 ## Ver os números antes de gerar
 
 O `--verificar` mostra o que vai ser desenhado, com números:

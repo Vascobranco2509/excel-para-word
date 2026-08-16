@@ -157,6 +157,16 @@ testes/test_gerar_relatorio.py
   `doses_novas`, porque essas mensagens servem para encontrar a coluna no Excel.
   A regra só toca em nomes com `_` ou todos em minúsculas: `IVA` e
   `Vendas Brutas` ficam como estão.
+- **`--sugerir` propõe gráficos a partir da forma das colunas** (decisão de
+  16/08/2026), para quem não sabe o que pedir. **Cada sugestão diz porquê** —
+  sem a razão são palpites. As sugestões são um ponto de partida, nunca uma
+  decisão: mostram-se ao utilizador e é ele que escolhe.
+- **A ordem em que se classifica uma coluna importa**, e as duas ordens erradas
+  já custaram defeitos: a linha do tempo tem de ser vista **antes** da regra do
+  identificador (numa série diária cada data é única por definição), e saber se
+  é número tem de vir **antes** dessa regra também (num CSV é tudo texto).
+- **Não sugerir cruzar um total com uma parte dele.** «confirmados» contra
+  «confirmados_norte» dá correlação por construção e não diz nada.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.
