@@ -146,6 +146,17 @@ testes/test_gerar_relatorio.py
   são para propor ao utilizador depois de ler o ficheiro — nunca aplicados por
   iniciativa própria. Quem leu o ficheiro foi o Claude; o utilizador não sabe o
   que a ferramenta consegue fazer.
+- **O `--verificar` mostra os números, não só «sem avisos»** (decisão de
+  16/08/2026). Três defeitos desta skill — a linha `TOTAL` como categoria, um
+  acumulado somado, um cabeçalho errado — eram óbvios com os números à frente e
+  só se descobriram com o documento feito. **Sem flag nova**: junta-se ao
+  `--verificar`, que já é obrigatório. Uma flag por cada coisa é o contrário de
+  ser fácil de usar.
+- **Nome bonito no relatório, nome real nos avisos.** `doses_novas` aparece como
+  «Doses novas» nos eixos, títulos e texto; nos avisos e erros mantém-se
+  `doses_novas`, porque essas mensagens servem para encontrar a coluna no Excel.
+  A regra só toca em nomes com `_` ou todos em minúsculas: `IVA` e
+  `Vendas Brutas` ficam como estão.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.

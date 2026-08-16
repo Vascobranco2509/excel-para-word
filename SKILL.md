@@ -160,6 +160,11 @@ de escrever o plano:
 python scripts/gerar_relatorio.py --dados DADOS.xlsx --plano plano.json --verificar
 ```
 
+O `--verificar` mostra **o que vai ser desenhado, com números**. **Ler essa
+amostra antes de seguir em frente** e confirmar que faz sentido: se a coluna
+escolhida estiver errada, ou se um total for absurdo (um acumulado somado dá
+mil milhões), vê-se aqui — não depois, com o documento feito.
+
 Se houver avisos, **traduzi-los para linguagem simples e mostrá-los ao
 utilizador**. Depois **esperar pela resposta dele**. Exemplos de tradução:
 

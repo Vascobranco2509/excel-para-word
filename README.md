@@ -419,6 +419,39 @@ vocabulário técnico com significado fixo: `tendência crescente`, `dispersão 
 `ajuste moderado`, `valor atípico`. Cada um com o número e o critério à frente, para quem
 lê poder discordar do critério em vez de discordar da opinião.
 
+## Ver os números antes de gerar
+
+O `--verificar` mostra o que vai ser desenhado, com números:
+
+```
+Vou fazer 2 gráfico(s):
+
+1. «Doses administradas» — linhas, Doses somado por Data
+   27/12/2020 4.963 · 28/12/2020 7.754 · 29/12/2020 20.368 … (mais 264)
+   Total: 1.531.289.090
+
+2. «Primeira e segunda dose» — linhas, uma coluna por série, somado por Data, 2 séries
+   Doses1 929.514.265 · Doses2 600.621.172
+```
+
+Cinco categorias no máximo, e depois «(mais N)». Com séries mostra as séries; numa
+dispersão mostra os intervalos de cada eixo.
+
+**Serve para apanhar enganos antes de esperar pelo documento.** No exemplo acima, aquele
+total de mil milhões salta à vista: a coluna é um acumulado, e somá-la não faz sentido.
+
+## Nomes das colunas no relatório
+
+Uma coluna chamada `doses_novas` aparece no relatório como **«Doses novas»** — no eixo do
+gráfico, no título e no texto.
+
+A regra é conservadora: só se mexe em nomes com `_` ou todos em minúsculas. `IVA` fica
+`IVA`, `Vendas Brutas` fica como está — se alguém pôs maiúsculas, foi por alguma razão.
+
+**Os avisos e os erros continuam a usar o nome real**, tal como está no ficheiro. Servem
+para ires encontrar a coluna no Excel; um nome embelezado aí mandava-te procurar uma
+coluna que não existe.
+
 ## Quando é que se recusa a gerar
 
 O script analisa sempre os dados antes de gerar. Se encontrar algum destes casos,

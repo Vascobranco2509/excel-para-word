@@ -208,6 +208,26 @@ def formatar_categoria(valor) -> str:
     return str(valor)
 
 
+def nome_legivel(nome) -> str:
+    """Nome de coluna como se escreve num relatorio: «doses_novas» -> «Doses novas».
+
+    Regra conservadora: so se mexe em nomes com «_» ou todos em minusculas. Se
+    ja tem maiusculas ou espacos, alguem escreveu aquilo de proposito -- «IVA»
+    fica «IVA» e «Vendas Brutas» fica como esta.
+
+    SO PARA O TEXTO DO RELATORIO. Avisos e erros usam sempre o nome real: sao
+    para a pessoa ir encontrar a coluna no Excel, e um nome embelezado ai
+    mandava-a procurar uma coluna que nao existe.
+    """
+    texto = str(nome)
+    tem_maiuscula = any(c.isupper() for c in texto)
+    if "_" not in texto and (tem_maiuscula or " " in texto):
+        return texto
+
+    limpo = texto.replace("_", " ").strip()
+    return limpo[:1].upper() + limpo[1:] if limpo else texto
+
+
 def listar(itens) -> str:
     return ", ".join(f"«{item}»" for item in itens)
 
@@ -1042,7 +1062,8 @@ def series_de_colunas(df: pd.DataFrame, grafico: dict, eixo_x: str,
             continue
         agregada = agregar(limpo, eixo_x, nome, agregacao)
         if not agregada.empty:
-            series[str(nome)] = agregada
+            # o nome da serie vem de um nome de coluna: entra bonito na legenda
+            series[nome_legivel(nome)] = agregada
 
     if len(series) < 2:
         raise ErroDados(
@@ -1551,14 +1572,14 @@ def desenhar(serie: pd.Series, series: dict, grafico: dict, destino: Path) -> No
 
     if tipo == "barras_horizontais":
         eixos.set_axisbelow(True)
-        eixos.set_ylabel(str(grafico["eixo_x"]))
+        eixos.set_ylabel(nome_legivel(grafico["eixo_x"]))
         eixos.set_xlabel(rotulo_do_eixo_y(grafico))
         eixos.xaxis.set_major_formatter(
             matplotlib.ticker.FuncFormatter(lambda v, _: formatar_numero(v))
         )
     elif tipo != "circular":
         eixos.set_axisbelow(True)
-        eixos.set_xlabel(str(grafico["eixo_x"]))
+        eixos.set_xlabel(nome_legivel(grafico["eixo_x"]))
         eixos.set_ylabel(rotulo_do_eixo_y(grafico))
         eixos.yaxis.set_major_formatter(
             matplotlib.ticker.FuncFormatter(lambda v, _: formatar_numero(v))
@@ -1584,7 +1605,7 @@ def rotulo_do_eixo_y(grafico: dict) -> str:
     """
     if isinstance(grafico.get("serie"), list):
         return ""
-    return str(grafico.get("eixo_y") or "Registos")
+    return nome_legivel(grafico.get("eixo_y") or "Registos")
 
 # cores e tracos distinguiveis tambem a preto e branco e por quem nao distingue
 # vermelho de verde: a forma do traco identifica a serie, nao so a cor
@@ -1689,8 +1710,8 @@ def rodar_rotulos(eixos, rotulos: list[str]) -> None:
 
 def frase_descritiva(serie: pd.Series, grafico: dict, n_linhas: int) -> str:
     """Frase descritiva, com numeros vindos da mesma conta que desenhou o grafico."""
-    eixo_x = grafico["eixo_x"]
-    eixo_y = grafico.get("eixo_y")
+    eixo_x = nome_legivel(grafico["eixo_x"])
+    eixo_y = nome_legivel(grafico["eixo_y"]) if grafico.get("eixo_y") else None
 
     if grafico["tipo"] in TIPOS_SEM_AGREGACAO:
         return (
@@ -2190,7 +2211,8 @@ def analise_dispersao(serie: pd.Series, grafico: dict) -> list[tuple[str, str]]:
     """
     xs = [como_numero(c) for c in serie.index]
     ys = [float(v) for v in serie.values]
-    eixo_x, eixo_y = grafico["eixo_x"], grafico["eixo_y"]
+    eixo_x = nome_legivel(grafico["eixo_x"])
+    eixo_y = nome_legivel(grafico["eixo_y"])
 
     blocos = [("Âmbito", (
         f"{formatar_numero(len(ys))} pontos, um por linha do ficheiro. "
@@ -2243,7 +2265,7 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
     media = total / len(valores)
 
     blocos.append(("Âmbito", (
-        f"{formatar_numero(len(serie))} categorias de «{grafico['eixo_x']}», "
+        f"{formatar_numero(len(serie))} categorias de «{nome_legivel(grafico['eixo_x'])}», "
         f"a partir de {formatar_numero(n_linhas)} linhas. "
         f"Total {formatar_numero(total)}; média {formatar_numero(media)}; "
         f"mediana {formatar_numero(float(serie.median()))}."
@@ -2317,13 +2339,13 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
             blocos.append(secao_previsao(serie, pedido))
     else:
         blocos.append(("Evolução", (
-            f"Não analisada — «{grafico['eixo_x']}» é um eixo categórico, não uma "
+            f"Não analisada — «{nome_legivel(grafico['eixo_x'])}» é um eixo categórico, não uma "
             "linha do tempo. Tendências e regressões só têm significado quando a "
             "ordem das categorias é a ordem do tempo."
         )))
         if pedido:
             blocos.append(("Previsão", (
-                f"Não calculada — «{grafico['eixo_x']}» é um eixo categórico. Prever o "
+                f"Não calculada — «{nome_legivel(grafico['eixo_x'])}» é um eixo categórico. Prever o "
                 "período seguinte só faz sentido quando existe um período seguinte."
             )))
 
@@ -2350,7 +2372,7 @@ def secao_comparacao_series(series: dict, grafico: dict,
 
     o_que = "média" if agregacao == "media" else "total"
     origem = ("uma por coluna" if isinstance(grafico["serie"], list)
-              else f"de «{grafico['serie']}»")
+              else f"de «{nome_legivel(grafico['serie'])}»")
     texto = (
         f"{formatar_numero(len(series))} séries, {origem}. "
         f"Por {o_que}: " + "; ".join(partes) + "."
@@ -2863,8 +2885,8 @@ def acrescentar_tabela(documento, serie: pd.Series, grafico: dict,
     tabela = documento.add_table(rows=1, cols=2)
     tabela.style = "Light Grid Accent 1"
     cabecalho = tabela.rows[0].cells
-    cabecalho[0].text = str(grafico["eixo_x"])
-    cabecalho[1].text = str(grafico.get("eixo_y") or "Registos")
+    cabecalho[0].text = nome_legivel(grafico["eixo_x"])
+    cabecalho[1].text = nome_legivel(grafico.get("eixo_y") or "Registos")
 
     for categoria, valor in mostradas.items():
         celulas = tabela.add_row().cells
@@ -2887,6 +2909,81 @@ def acrescentar_tabela(documento, serie: pd.Series, grafico: dict,
 # --------------------------------------------------------------------- main
 
 
+MAX_AMOSTRA = 5
+
+
+def descrever_graficos(preparados: list[dict]) -> list[str]:
+    """Diz o que vai ser desenhado, com numeros.
+
+    Nao e informacao nova: e tornar visivel o que ja se calculou. Tres dos
+    defeitos encontrados nesta skill -- uma linha TOTAL a contar como
+    categoria, um acumulado somado, um cabecalho errado -- eram obvios a
+    primeira vista com os numeros a frente, e so se descobriram com o
+    documento ja feito.
+    """
+    linhas = [f"Vou fazer {formatar_numero(len(preparados))} gráfico(s):"]
+
+    for posicao, preparado in enumerate(preparados, start=1):
+        grafico = preparado["grafico"]
+        conjunto = preparado["conjunto"]
+        series = preparado["series"]
+        nomes = [n for n in series if n != ""]
+
+        eixo_y = nome_legivel(grafico["eixo_y"]) if grafico.get("eixo_y") else None
+        eixo_x = nome_legivel(grafico["eixo_x"])
+
+        if grafico["tipo"] in TIPOS_SEM_AGREGACAO:
+            xs = [como_numero(c) for c in conjunto.index]
+            ys = [float(v) for v in conjunto.values]
+            linhas.append(
+                f"\n{posicao}. «{grafico['titulo']}» — dispersão, "
+                f"{formatar_numero(len(ys))} pontos"
+            )
+            linhas.append(
+                f"   {eixo_x} de {formatar_com_precisao(min(xs))} a "
+                f"{formatar_com_precisao(max(xs))}; {eixo_y} de "
+                f"{formatar_com_precisao(min(ys))} a {formatar_com_precisao(max(ys))}"
+            )
+            continue
+
+        agregacao = grafico["agregacao"]
+        como = {"soma": "somado", "media": "em média", "contagem": "contado"}[agregacao]
+        if isinstance(grafico.get("serie"), list):
+            o_que = f"uma coluna por série, {como}"
+        elif eixo_y:
+            o_que = f"{eixo_y} {como}"
+        else:
+            o_que = f"registos {como}s"
+        cabecalho = (f"\n{posicao}. «{grafico['titulo']}» — {grafico['tipo']}, "
+                     f"{o_que} por {eixo_x}")
+        if nomes:
+            cabecalho += f", {formatar_numero(len(nomes))} séries"
+        linhas.append(cabecalho)
+
+        if nomes:
+            partes = [
+                f"{nome} {formatar_com_precisao(s.mean() if agregacao == 'media' else s.sum())}"
+                for nome, s in series.items()
+            ]
+            linhas.append("   " + " · ".join(partes))
+        else:
+            mostradas = conjunto.head(MAX_AMOSTRA)
+            partes = [
+                f"{formatar_categoria(c)} {formatar_com_precisao(v)}"
+                for c, v in mostradas.items()
+            ]
+            resto = len(conjunto) - len(mostradas)
+            amostra = " · ".join(partes) + (f" … (mais {formatar_numero(resto)})"
+                                            if resto > 0 else "")
+            linhas.append("   " + amostra)
+            if agregacao == "media":
+                linhas.append(f"   Média geral: {formatar_com_precisao(conjunto.mean())}")
+            else:
+                linhas.append(f"   Total: {formatar_com_precisao(conjunto.sum())}")
+
+    return linhas
+
+
 def executar(args) -> int:
     plano = ler_plano(Path(args.plano))
     fonte = abrir_dados(Path(args.dados))
@@ -2904,9 +3001,13 @@ def executar(args) -> int:
             "n_linhas": n_linhas, "temporal": temporal, "serie_anual": anual,
         })
 
-    print(f"Plano lido: {len(preparados)} gráfico(s).")
-    for nota in notas:
-        print(f"  · {nota}")
+    for linha in descrever_graficos(preparados):
+        print(linha)
+
+    if notas:
+        print("\nNotas sobre a leitura:")
+        for nota in notas:
+            print(f"  · {nota}")
 
     if avisos:
         print(f"\n{len(avisos)} aviso(s) sobre os dados:")

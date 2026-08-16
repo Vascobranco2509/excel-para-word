@@ -822,6 +822,104 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
     assert any("ficariam de fora" in a for a in avisos)
 
 
+# --------------------------------------------- nomes de coluna legiveis
+
+
+def test_nome_legivel_arruma_o_que_precisa():
+    assert gr.nome_legivel("doses_novas") == "Doses novas"
+    assert gr.nome_legivel("valor") == "Valor"
+    assert gr.nome_legivel("confirmados_arsnorte") == "Confirmados arsnorte"
+
+
+def test_nome_legivel_nao_estraga_o_que_ja_esta_bem():
+    """Se alguem pos maiusculas, foi de proposito."""
+    assert gr.nome_legivel("Valor") == "Valor"
+    assert gr.nome_legivel("IVA") == "IVA"
+    assert gr.nome_legivel("Vendas Brutas") == "Vendas Brutas"
+    assert gr.nome_legivel("Periodo") == "Periodo"
+
+
+def test_relatorio_usa_o_nome_bonito_e_o_aviso_o_real(tmp_path):
+    """A distincao que importa: o texto e para ler, o aviso e para procurar."""
+    ficheiro = escrever_csv(tmp_path / "n.csv", [
+        "mes;doses_novas", "Janeiro;10", "Fevereiro;vinte", "Marco;30",
+    ])
+    config = grafico(eixo_x="mes", eixo_y="doses_novas")
+    serie, _, avisos, _ = preparar(ficheiro, config)
+
+    frase = gr.frase_descritiva(serie, config, 2)
+    assert "Doses novas" in frase, "o relatório devia usar o nome bonito"
+    assert "doses_novas" not in frase
+
+    assert any("doses_novas" in a for a in avisos), \
+        "o aviso devia usar o nome real, para se encontrar a coluna no Excel"
+
+
+# ------------------------------------------- amostra antes de gerar
+
+
+def test_verificar_mostra_os_numeros(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "a.xlsx",
+                              {"Mes": MESES[:3], "Valor": [10, 20, 30]})
+    plano = escrever_plano(tmp_path / "p.json", [grafico()])
+    resultado = correr_cli("--dados", str(ficheiro), "--plano", str(plano),
+                           "--verificar")
+
+    assert "Vou fazer 1 gráfico" in resultado.stdout
+    assert "Janeiro 10" in resultado.stdout
+    assert "Total: 60" in resultado.stdout
+
+
+def test_amostra_corta_as_cinco_primeiras(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "a.xlsx",
+                              {"Mes": MESES, "Valor": list(range(1, 13))})
+    plano = escrever_plano(tmp_path / "p.json", [grafico()])
+    resultado = correr_cli("--dados", str(ficheiro), "--plano", str(plano),
+                           "--verificar")
+
+    assert "(mais 7)" in resultado.stdout
+    assert "Dezembro" not in resultado.stdout.split("Total:")[0]
+
+
+def test_amostra_com_series_mostra_as_series(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "s.xlsx", {
+        "Mes": ["Janeiro", "Janeiro", "Fevereiro", "Fevereiro"],
+        "Canal": ["Online", "Loja"] * 2,
+        "Valor": [100, 40, 200, 50],
+    })
+    plano = escrever_plano(tmp_path / "p.json", [grafico(serie="Canal")])
+    resultado = correr_cli("--dados", str(ficheiro), "--plano", str(plano),
+                           "--verificar")
+
+    assert "2 séries" in resultado.stdout
+    assert "Online 300" in resultado.stdout
+    assert "Loja 90" in resultado.stdout
+
+
+def test_amostra_da_dispersao_mostra_intervalos(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "d.xlsx",
+                              {"a": [1, 2, 3, 4], "b": [10, 20, 30, 40]})
+    plano = escrever_plano(tmp_path / "p.json", [
+        {"tipo": "dispersao", "eixo_x": "a", "eixo_y": "b", "titulo": "R"}])
+    resultado = correr_cli("--dados", str(ficheiro), "--plano", str(plano),
+                           "--verificar")
+
+    assert "4 pontos" in resultado.stdout
+    assert "de 1 a 4" in resultado.stdout
+    assert "de 10 a 40" in resultado.stdout
+
+
+def test_media_mostra_media_e_nao_total(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "m.xlsx",
+                              {"Mes": MESES[:3], "Valor": [10, 20, 30]})
+    plano = escrever_plano(tmp_path / "p.json", [grafico(agregacao="media")])
+    resultado = correr_cli("--dados", str(ficheiro), "--plano", str(plano),
+                           "--verificar")
+
+    assert "Média geral: 20" in resultado.stdout
+    assert "Total:" not in resultado.stdout
+
+
 # ------------------------------------------------------------ filtro
 
 
@@ -1042,9 +1140,10 @@ def test_lista_de_colunas_da_varias_series(tmp_path):
     config.pop("eixo_y")
     series, _, _, _ = preparar_series(ficheiro, config)
 
-    assert list(series) == ["norte", "sul"]
-    assert series["norte"].sum() == 60
-    assert series["sul"].sum() == 18
+    # os nomes das series vem de nomes de coluna: entram bonitos na legenda
+    assert list(series) == ["Norte", "Sul"]
+    assert series["Norte"].sum() == 60
+    assert series["Sul"].sum() == 18
 
 
 def test_lista_de_colunas_com_eixo_y_e_recusada():
