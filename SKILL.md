@@ -90,10 +90,29 @@ O formato largo é muito comum em exportações e em folhas feitas à mão. **N�
 tentar reorganizar o ficheiro**: a skill lê os dois, e alterar o original está
 proibido pela regra 1.
 
-### 2. Confirmar o pedido
+### 2. Confirmar o pedido — e oferecer o que o ficheiro pede
 
 Poucas perguntas de cada vez, e só as que mudam o resultado: que gráficos, de que
 colunas, agrupados como. Nunca perguntar sobre cores, tipos de letra ou tamanhos.
+
+**Depois de inspecionar, reparar no que dá escolha e perguntar.** O utilizador
+não sabe o que a ferramenta consegue fazer; quem leu o ficheiro foi o Claude.
+Estas quatro são para oferecer, e **nunca para decidir sozinho**:
+
+| O que se vê no ficheiro | O que perguntar |
+|---|---|
+| Mais períodos do que os que ele mencionou (três anos, e ele falou de um) | «Tem dados de 2023, 2024 e 2025. Queres o relatório dos três anos, ou só de um?» → `filtro` |
+| Categorias com nomes compridos (mais de ~20 letras) | «Os nomes das campanhas são compridos e não cabem por baixo das barras. Queres barras deitadas?» → `barras_horizontais` |
+| Duas colunas de números que façam sentido juntas (investimento e conversões, cliques e vendas) | «Queres um gráfico a cruzar as duas, para ver se andam juntas?» → `dispersao` |
+| Uma linha do tempo com várias séries | «Queres ver o peso de cada uma no total ao longo do tempo?» → `area` |
+
+**Nunca filtrar por iniciativa própria.** Filtrar é esconder dados: só entra se
+ele pedir. Quando entra, o relatório escreve sozinho o que ficou de fora.
+
+**Nunca prometer o que a dispersão não dá.** Ela mostra se duas colunas andam
+juntas — não mostra que uma causa a outra. Se ele perguntar «então investir mais
+traz mais vendas?», a resposta honesta é que os dados mostram a relação e não a
+explicam.
 
 ### 3. Escrever o `plano.json`
 

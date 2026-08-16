@@ -38,13 +38,20 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 
-TIPOS_GRAFICO = ("barras", "linhas", "circular")
+TIPOS_GRAFICO = ("barras", "barras_horizontais", "linhas", "area", "circular",
+                 "dispersao")
+# a dispersao nao agrupa nada: cruza duas colunas de numeros, um ponto por linha
+TIPOS_SEM_AGREGACAO = ("dispersao",)
+
+# forca da correlacao, com o criterio escrito ao lado como todos os outros
+R_CORRELACAO_FRACA = 0.3
+R_CORRELACAO_FORTE = 0.7
 AGREGACOES = ("soma", "media", "contagem")
 
-CHAVES_OBRIGATORIAS = ("tipo", "eixo_x", "agregacao", "titulo")
+CHAVES_OBRIGATORIAS = ("tipo", "eixo_x", "titulo")
 CHAVES_OPCIONAIS = ("folha", "eixo_y", "nota", "tabela_dados", "linha_cabecalho",
                     "coluna_periodo", "eixo_temporal", "previsao", "meta",
-                    "serie")
+                    "serie", "agregacao", "filtro")
 
 AMBITOS_META = ("total", "categoria", "serie")
 # acima disto as linhas confundem-se umas com as outras
@@ -502,12 +509,37 @@ def validar_grafico(grafico, indice: int) -> None:
             f"O {onde} pede o tipo «{grafico['tipo']}», que não existe. "
             f"Tipos disponíveis: {listar(TIPOS_GRAFICO)}."
         )
-    if grafico["agregacao"] not in AGREGACOES:
+    if grafico["tipo"] in TIPOS_SEM_AGREGACAO:
+        if grafico.get("agregacao"):
+            raise ErroDados(
+                f"O {onde} é de dispersão e traz «agregacao». Uma dispersão não "
+                "agrupa nada: cruza duas colunas de números, um ponto por linha. "
+                "Tira a «agregacao»."
+            )
+        if grafico.get("serie"):
+            raise ErroDados(
+                f"O {onde} é de dispersão e traz «serie». Ainda não há séries em "
+                "gráficos de dispersão; faz um gráfico por série, ou usa «linhas»."
+            )
+        if not grafico.get("eixo_y"):
+            raise ErroDados(
+                f"O {onde} é de dispersão e precisa de «eixo_y»: são precisas duas "
+                "colunas de números, uma para cada eixo."
+            )
+    elif not grafico.get("agregacao"):
+        raise ErroDados(
+            f"Falta «agregacao» no {onde}. "
+            f"Agregações disponíveis: {listar(AGREGACOES)}."
+        )
+    elif grafico["agregacao"] not in AGREGACOES:
         raise ErroDados(
             f"O {onde} pede a agregação «{grafico['agregacao']}», que não existe. "
             f"Agregações disponíveis: {listar(AGREGACOES)}."
         )
-    if (grafico["agregacao"] != "contagem" and not grafico.get("eixo_y")
+
+    validar_filtro(grafico.get("filtro"), onde)
+    if (grafico.get("agregacao") not in (None, "contagem")
+            and not grafico.get("eixo_y")
             and not isinstance(grafico.get("serie"), list)):
         raise ErroDados(
             f"O {onde} usa a agregação «{grafico['agregacao']}» e por isso "
@@ -809,6 +841,85 @@ def detetar_separador(texto: str) -> str:
     return melhor if contagens[melhor] > 0 else ","
 
 
+def validar_filtro(filtro, onde: str) -> None:
+    if filtro is None:
+        return
+    if not isinstance(filtro, dict):
+        raise ErroDados(
+            f"O «filtro» do {onde} tem de ser um objeto, por exemplo "
+            '{"coluna": "Ano", "igual_a": 2025}.'
+        )
+    desconhecidas = sorted(set(filtro) - {"coluna", "igual_a", "de", "ate"})
+    if desconhecidas:
+        raise ErroDados(
+            f"O «filtro» do {onde} tem campos que não existem: "
+            f"{listar(desconhecidas)}. Só há «coluna», «igual_a», «de» e «ate»."
+        )
+    if not isinstance(filtro.get("coluna"), str) or not filtro["coluna"].strip():
+        raise ErroDados(f"O «filtro» do {onde} precisa de «coluna».")
+    if not any(chave in filtro for chave in ("igual_a", "de", "ate")):
+        raise ErroDados(
+            f"O «filtro» do {onde} não diz o que filtrar. Usa «igual_a» (um valor "
+            "ou uma lista), «de» e «ate» (intervalo), ou os dois."
+        )
+
+
+def aplicar_filtro(df: pd.DataFrame, grafico: dict, onde: str, folha: str,
+                   notas: list[str]) -> pd.DataFrame:
+    """Filtra as linhas, e escreve SEMPRE no relatorio o que ficou de fora.
+
+    Filtrar e esconder dados. Um relatorio que mostra 2025 sem dizer que
+    ignorou 2023 e 2024 e enganador, por isso o filtro fica registado.
+    """
+    filtro = grafico.get("filtro")
+    if not filtro:
+        return df
+
+    coluna = filtro["coluna"]
+    if coluna not in df.columns:
+        raise ErroDados(
+            f"O filtro do {onde} usa a coluna «{coluna}», que não existe "
+            f"{onde_fica(folha, 'em')}. "
+            f"Colunas disponíveis: {listar_colunas(df.columns)}."
+        )
+
+    antes = len(df)
+    condicoes = []
+    valores = df[coluna]
+
+    if "igual_a" in filtro:
+        alvo = filtro["igual_a"]
+        alvos = alvo if isinstance(alvo, list) else [alvo]
+        # compara como texto: no CSV vem tudo como texto e 2025 != "2025"
+        df = df[valores.map(lambda v: str(v) in {str(a) for a in alvos})]
+        condicoes.append(f"«{coluna}» igual a {listar([str(a) for a in alvos])}")
+
+    for chave, simbolo, comparar in (("de", "≥", lambda s, l: s >= l),
+                                     ("ate", "≤", lambda s, l: s <= l)):
+        if chave in filtro:
+            numeros = pd.to_numeric(df[coluna], errors="coerce")
+            limite = como_numero(filtro[chave])
+            if limite is None or numeros.notna().sum() == 0:
+                raise ErroDados(
+                    f"O filtro do {onde} compara «{coluna}» com "
+                    f"«{filtro[chave]}», mas isso exige números dos dois lados."
+                )
+            df = df[comparar(numeros, limite)]
+            condicoes.append(f"«{coluna}» {simbolo} {formatar_com_precisao(limite)}")
+
+    if df.empty:
+        raise ErroDados(
+            f"O filtro do {onde} ({'; '.join(condicoes)}) não deixou nenhuma linha."
+        )
+
+    notas.append(
+        f"{grafico['titulo']}: filtro aplicado — {'; '.join(condicoes)}. "
+        f"Usadas {formatar_numero(len(df))} de {formatar_numero(antes)} linhas; "
+        f"{formatar_numero(antes - len(df))} ficaram de fora."
+    )
+    return df
+
+
 def abrir_dados(caminho: Path):
     if not caminho.exists():
         raise ErroDados(f"O ficheiro «{caminho}» não foi encontrado.")
@@ -1046,6 +1157,42 @@ def separar_series(df: pd.DataFrame, grafico: dict, eixo_x: str,
     return series
 
 
+def preparar_dispersao(df: pd.DataFrame, grafico: dict, eixo_x: str,
+                       eixo_y: str, folha: str, onde: str, fonte,
+                       avisos: list[str], notas: list[str]) -> tuple:
+    """Prepara um grafico de dispersao: um ponto por linha, sem agrupar.
+
+    As duas colunas tem de ser numeros. Nao ha categorias nem agregacao, por
+    isso tambem nao ha analise temporal, sazonalidade nem previsao.
+    """
+    if eixo_y not in df.columns:
+        raise ErroDados(
+            f"O {onde} pede a coluna «{eixo_y}», que não existe "
+            f"{onde_fica(folha, 'em')}. "
+            f"Colunas disponíveis: {listar_colunas(df.columns)}."
+        )
+
+    for coluna in (eixo_x, eixo_y):
+        df = converter_para_numero(df, coluna, folha, onde, avisos, notas,
+                                   tudo_texto=fonte.tudo_texto)
+
+    antes = len(df)
+    df = df.dropna(subset=[eixo_x, eixo_y])
+    if antes - len(df):
+        acrescentar(avisos, (
+            f"{antes - len(df)} linha(s) {onde_fica(folha)} foram ignoradas por "
+            f"terem células vazias em {listar([eixo_x, eixo_y])}."
+        ))
+    if len(df) < 3:
+        raise ErroDados(
+            f"O {onde} é de dispersão e ficou com {len(df)} ponto(s). "
+            "São precisos pelo menos 3 para o gráfico dizer alguma coisa."
+        )
+
+    serie = pd.Series(df[eixo_y].to_numpy(), index=df[eixo_x].to_numpy())
+    return {"": serie}, len(df), False, None, serie
+
+
 def preparar_dados(fonte, grafico: dict, indice: int,
                    avisos: list[str], notas: list[str]) -> tuple[pd.Series, int]:
     """Le a folha, valida colunas e devolve a serie agregada e o nº de linhas usadas.
@@ -1082,6 +1229,8 @@ def preparar_dados(fonte, grafico: dict, indice: int,
             "da tabela. Foram ignoradas."
         ))
 
+    df = aplicar_filtro(df, grafico, onde, folha, notas)
+
     eixo_x = grafico["eixo_x"]
     if eixo_x not in df.columns:
         raise ErroDados(
@@ -1091,8 +1240,12 @@ def preparar_dados(fonte, grafico: dict, indice: int,
 
     df = reconhecer_datas(df, eixo_x, onde, notas)
 
-    agregacao = grafico["agregacao"]
+    agregacao = grafico.get("agregacao")
     eixo_y = grafico.get("eixo_y")
+
+    if grafico["tipo"] in TIPOS_SEM_AGREGACAO:
+        return preparar_dispersao(df, grafico, eixo_x, eixo_y, folha, onde,
+                                  fonte, avisos, notas)
 
     if isinstance(grafico.get("serie"), list):
         # formato largo: cada coluna da lista e uma serie. Converte-se cada uma,
@@ -1362,13 +1515,28 @@ def desenhar(serie: pd.Series, series: dict, grafico: dict, destino: Path) -> No
     # isso encolhe o texto ate ficar ilegivel na pagina impressa
     figura, eixos = plt.subplots(figsize=(7, 4), dpi=200)
 
-    if nomes and tipo in ("barras", "linhas"):
+    if tipo == "dispersao":
+        eixos.scatter([como_numero(c) for c in serie.index], valores,
+                      color=CORES[0], alpha=0.7, edgecolors="white", linewidths=0.5)
+        eixos.grid(linestyle=":", alpha=0.6)
+    elif nomes and tipo in ("barras", "barras_horizontais", "linhas", "area"):
         desenhar_series(eixos, series, serie.index, rotulos, tipo)
     elif tipo == "barras":
         eixos.bar(rotulos, valores, color=CORES[0])
         eixos.grid(axis="y", linestyle=":", alpha=0.6)
+    elif tipo == "barras_horizontais":
+        # deitadas de propositio: nomes compridos nao cabem numa barra em pe
+        eixos.barh(rotulos, valores, color=CORES[0])
+        eixos.invert_yaxis()  # o primeiro do ficheiro fica em cima
+        eixos.grid(axis="x", linestyle=":", alpha=0.6)
     elif tipo == "linhas":
         eixos.plot(rotulos, valores, marker="o", color=CORES[0], linewidth=2)
+        eixos.grid(linestyle=":", alpha=0.6)
+    elif tipo == "area":
+        eixos.fill_between(range(len(valores)), valores, color=CORES[0], alpha=0.35)
+        eixos.plot(range(len(valores)), valores, color=CORES[0], linewidth=2)
+        eixos.set_xticks(range(len(rotulos)))
+        eixos.set_xticklabels(rotulos)
         eixos.grid(linestyle=":", alpha=0.6)
     else:  # circular
         eixos.pie(
@@ -1381,14 +1549,22 @@ def desenhar(serie: pd.Series, series: dict, grafico: dict, destino: Path) -> No
         )
         eixos.axis("equal")
 
-    if tipo in ("barras", "linhas"):
+    if tipo == "barras_horizontais":
+        eixos.set_axisbelow(True)
+        eixos.set_ylabel(str(grafico["eixo_x"]))
+        eixos.set_xlabel(rotulo_do_eixo_y(grafico))
+        eixos.xaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda v, _: formatar_numero(v))
+        )
+    elif tipo != "circular":
         eixos.set_axisbelow(True)
         eixos.set_xlabel(str(grafico["eixo_x"]))
         eixos.set_ylabel(rotulo_do_eixo_y(grafico))
         eixos.yaxis.set_major_formatter(
             matplotlib.ticker.FuncFormatter(lambda v, _: formatar_numero(v))
         )
-        rodar_rotulos(eixos, rotulos)
+        if tipo != "dispersao":
+            rodar_rotulos(eixos, rotulos)
 
     figura.tight_layout()
     figura.savefig(destino, bbox_inches="tight")
@@ -1427,7 +1603,28 @@ def desenhar_series(eixos, series: dict, categorias, rotulos: list[str],
     rotulos errados, em silencio.
     """
     nomes = list(series)
-    if tipo == "linhas":
+    if tipo == "area":
+        # empilhadas: ve-se o total e quanto cada serie contribui
+        eixos.stackplot(range(len(rotulos)),
+                        *[alinhar(series[n], categorias) for n in nomes],
+                        labels=nomes, colors=CORES[:len(nomes)], alpha=0.8)
+        eixos.set_xticks(range(len(rotulos)))
+        eixos.set_xticklabels(rotulos)
+        eixos.grid(linestyle=":", alpha=0.6)
+        rodar_rotulos(eixos, rotulos)
+    elif tipo == "barras_horizontais":
+        altura = 0.8 / len(nomes)
+        posicoes = range(len(rotulos))
+        for posicao, nome in enumerate(nomes):
+            deslocamento = (posicao - (len(nomes) - 1) / 2) * altura
+            eixos.barh([p + deslocamento for p in posicoes],
+                       alinhar(series[nome], categorias),
+                       height=altura, label=nome, color=CORES[posicao % len(CORES)])
+        eixos.set_yticks(list(posicoes))
+        eixos.set_yticklabels(rotulos)
+        eixos.invert_yaxis()
+        eixos.grid(axis="x", linestyle=":", alpha=0.6)
+    elif tipo == "linhas":
         for posicao, nome in enumerate(nomes):
             eixos.plot(rotulos, alinhar(series[nome], categorias), label=nome,
                        linewidth=2, color=CORES[posicao % len(CORES)],
@@ -1492,10 +1689,17 @@ def rodar_rotulos(eixos, rotulos: list[str]) -> None:
 
 def frase_descritiva(serie: pd.Series, grafico: dict, n_linhas: int) -> str:
     """Frase descritiva, com numeros vindos da mesma conta que desenhou o grafico."""
-    agregacao = grafico["agregacao"]
     eixo_x = grafico["eixo_x"]
     eixo_y = grafico.get("eixo_y")
 
+    if grafico["tipo"] in TIPOS_SEM_AGREGACAO:
+        return (
+            f"Cada ponto é uma linha do ficheiro: «{eixo_x}» na horizontal e "
+            f"«{eixo_y}» na vertical, a partir de {formatar_numero(n_linhas)} "
+            "linhas. O gráfico mostra como as duas colunas se relacionam."
+        )
+
+    agregacao = grafico["agregacao"]
     if agregacao == "soma":
         o_que = f"o total de «{eixo_y}»"
     elif agregacao == "media":
@@ -1963,6 +2167,64 @@ def secao_meta_por_serie(series: dict, grafico: dict) -> tuple[str, str]:
     return ("Meta", texto)
 
 
+def correlacao(xs: list[float], ys: list[float]) -> float | None:
+    """Coeficiente de correlacao de Pearson, entre -1 e 1."""
+    n = len(xs)
+    if n < 3:
+        return None
+    media_x, media_y = sum(xs) / n, sum(ys) / n
+    covariancia = sum((x - media_x) * (y - media_y) for x, y in zip(xs, ys))
+    desvio_x = math.sqrt(sum((x - media_x) ** 2 for x in xs))
+    desvio_y = math.sqrt(sum((y - media_y) ** 2 for y in ys))
+    if desvio_x == 0 or desvio_y == 0:
+        return None
+    return covariancia / (desvio_x * desvio_y)
+
+
+def analise_dispersao(serie: pd.Series, grafico: dict) -> list[tuple[str, str]]:
+    """Analise de um grafico de dispersao: intervalos e correlacao.
+
+    Termina sempre a dizer que correlacao nao e causa. A tentacao de ler
+    «investir mais causa mais conversoes» e enorme, e o ficheiro nao tem como
+    saber isso -- apontar causas continua proibido.
+    """
+    xs = [como_numero(c) for c in serie.index]
+    ys = [float(v) for v in serie.values]
+    eixo_x, eixo_y = grafico["eixo_x"], grafico["eixo_y"]
+
+    blocos = [("Âmbito", (
+        f"{formatar_numero(len(ys))} pontos, um por linha do ficheiro. "
+        f"«{eixo_x}» vai de {formatar_com_precisao(min(xs))} a "
+        f"{formatar_com_precisao(max(xs))}; «{eixo_y}» vai de "
+        f"{formatar_com_precisao(min(ys))} a {formatar_com_precisao(max(ys))}."
+    ))]
+
+    r = correlacao(xs, ys)
+    if r is None:
+        blocos.append(("Relação", (
+            "Não calculada — uma das colunas tem sempre o mesmo valor, e sem "
+            "variação não há relação que medir."
+        )))
+        return blocos
+
+    termos = ("fraca", "moderada", "forte")
+    forca = classificar(abs(r), R_CORRELACAO_FRACA, R_CORRELACAO_FORTE, termos)
+    sentido = ("positiva: sobem juntas" if r > 0
+               else "negativa: quando uma sobe, a outra desce")
+    blocos.append(("Relação", (
+        f"Coeficiente de correlação de Pearson de {formatar_numero(round(r, 2))} "
+        f"— correlação {forca} e {sentido} "
+        f"({criterio(R_CORRELACAO_FRACA, R_CORRELACAO_FORTE, termos, sufixo='')}, "
+        "em valor absoluto)."
+    )))
+    blocos.append(("O que isto não diz", (
+        "Correlação não é causa. Duas colunas subirem juntas não significa que "
+        "uma faça a outra subir: pode haver um terceiro fator, ou ser "
+        "coincidência. Este relatório mede a relação; não a explica."
+    )))
+    return blocos
+
+
 def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
                    temporal: bool, serie_anual: pd.Series | None
                    ) -> list[tuple[str, str]]:
@@ -1972,6 +2234,9 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
     calculada, e a regra vai escrita ao lado. Nunca «bom» ou «fraco» -- isso
     exigiria uma meta que o ficheiro Excel nao tem.
     """
+    if grafico["tipo"] in TIPOS_SEM_AGREGACAO:
+        return analise_dispersao(serie, grafico)
+
     blocos: list[tuple[str, str]] = []
     valores = [float(v) for v in serie.values]
     total = sum(valores)

@@ -133,6 +133,19 @@ testes/test_gerar_relatorio.py
   uma lista simples, **não um campo de índice do Word**: esse aparece vazio até
   alguém carregar em «atualizar», e um índice em branco é pior do que nenhum.
   A captura do README mostra a primeira página **com gráfico**, não a capa.
+- **Seis tipos de gráfico** (decisão de 16/08/2026): `barras`,
+  `barras_horizontais`, `linhas`, `area`, `circular`, `dispersao`.
+- **A dispersão não agrega nada**: cruza duas colunas de números, um ponto por
+  linha. Não leva `agregacao` nem `serie`, e tem análise própria — correlação de
+  Pearson, com o critério ao lado. **Termina sempre a dizer que correlação não é
+  causa**, porque essa é a leitura errada mais fácil de fazer.
+- **Filtrar linhas com o campo `filtro`**, e o filtro fica **sempre** registado no
+  relatório: quantas linhas entraram, quantas ficaram de fora, e a condição.
+  Filtrar sem dizer é esconder dados.
+- **O Claude oferece, não decide.** Filtro, barras horizontais, área e dispersão
+  são para propor ao utilizador depois de ler o ficheiro — nunca aplicados por
+  iniciativa própria. Quem leu o ficheiro foi o Claude; o utilizador não sabe o
+  que a ferramenta consegue fazer.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.
@@ -200,5 +213,5 @@ testes/test_gerar_relatorio.py
 
 ## 8. Fora de âmbito até alguém sentir a falta
 
-`barras_horizontais`, `area`, `dispersao`, células combinadas, filtros por
-coluna (um gráfico por região), saída em PDF ou PowerPoint.
+Células combinadas, um gráfico por categoria (uma página por região), mostrar só
+as N maiores com o resto em «Outras», saída em PDF ou PowerPoint.

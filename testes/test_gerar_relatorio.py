@@ -644,7 +644,7 @@ def test_campo_que_nao_existe_e_recusado():
 
 def test_tipo_desconhecido_lista_os_disponiveis():
     with pytest.raises(gr.ErroDados) as erro:
-        gr.validar_grafico(grafico(tipo="dispersao"), 1)
+        gr.validar_grafico(grafico(tipo="radar"), 1)
     assert "barras" in str(erro.value)
 
 
@@ -820,6 +820,142 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
                               {"Mes": categorias, "Valor": list(range(50))})
     _, _, avisos, _ = preparar(ficheiro, grafico(tipo="linhas", tabela_dados=True))
     assert any("ficariam de fora" in a for a in avisos)
+
+
+# ------------------------------------------------------------ filtro
+
+
+def ficheiro_com_anos(tmp_path: Path) -> Path:
+    return escrever_excel(tmp_path / "anos.xlsx", {
+        "Ano": [2023, 2023, 2024, 2025, 2025, 2025],
+        "Mes": ["Janeiro", "Fevereiro"] * 3,
+        "Valor": [10, 20, 30, 40, 50, 60],
+    })
+
+
+def test_filtro_igual_a_um_valor(tmp_path):
+    serie, n_linhas, _, notas = preparar(
+        ficheiro_com_anos(tmp_path),
+        grafico(filtro={"coluna": "Ano", "igual_a": 2025}))
+    assert n_linhas == 3
+    assert serie.sum() == 150
+
+
+def test_filtro_regista_sempre_o_que_ficou_de_fora(tmp_path):
+    """Filtrar sem dizer e esconder dados."""
+    _, _, _, notas = preparar(
+        ficheiro_com_anos(tmp_path),
+        grafico(filtro={"coluna": "Ano", "igual_a": 2025}))
+    texto = " ".join(notas)
+    assert "filtro aplicado" in texto
+    assert "3 de 6 linhas" in texto
+    assert "3 ficaram de fora" in texto
+
+
+def test_filtro_com_lista_de_valores(tmp_path):
+    serie, n_linhas, _, _ = preparar(
+        ficheiro_com_anos(tmp_path),
+        grafico(filtro={"coluna": "Ano", "igual_a": [2023, 2024]}))
+    assert n_linhas == 3
+    assert serie.sum() == 60
+
+
+def test_filtro_por_intervalo(tmp_path):
+    serie, _, _, _ = preparar(
+        ficheiro_com_anos(tmp_path),
+        grafico(filtro={"coluna": "Valor", "de": 30, "ate": 50}))
+    assert serie.sum() == 120  # 30 + 40 + 50
+
+
+def test_filtro_que_nao_deixa_nada_e_erro(tmp_path):
+    with pytest.raises(gr.ErroDados, match="não deixou nenhuma linha"):
+        preparar(ficheiro_com_anos(tmp_path),
+                 grafico(filtro={"coluna": "Ano", "igual_a": 1999}))
+
+
+def test_filtro_com_coluna_inexistente_e_erro(tmp_path):
+    with pytest.raises(gr.ErroDados, match="Regiao"):
+        preparar(ficheiro_com_anos(tmp_path),
+                 grafico(filtro={"coluna": "Regiao", "igual_a": "Norte"}))
+
+
+def test_filtro_mal_formado_e_recusado():
+    with pytest.raises(gr.ErroDados, match="objeto"):
+        gr.validar_grafico(grafico(filtro="Ano=2025"), 1)
+    with pytest.raises(gr.ErroDados, match="coluna"):
+        gr.validar_grafico(grafico(filtro={"igual_a": 2025}), 1)
+    with pytest.raises(gr.ErroDados, match="não diz o que filtrar"):
+        gr.validar_grafico(grafico(filtro={"coluna": "Ano"}), 1)
+
+
+# ------------------------------------------------- tipos de grafico novos
+
+
+def test_barras_horizontais_e_area_funcionam(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "t.xlsx",
+                              {"Mes": MESES[:3], "Valor": [10, 20, 30]})
+    for tipo in ("barras_horizontais", "area"):
+        serie, _, _, _ = preparar(ficheiro, grafico(tipo=tipo))
+        assert serie.sum() == 60, tipo
+
+
+def test_dispersao_cruza_duas_colunas(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "d.xlsx", {
+        "Investimento": [100, 200, 300, 400],
+        "Conversoes": [10, 19, 31, 40],
+    })
+    config = {"tipo": "dispersao", "eixo_x": "Investimento",
+              "eixo_y": "Conversoes", "titulo": "Relação"}
+    serie, n_linhas, _, _ = preparar(ficheiro, config)
+
+    assert n_linhas == 4  # um ponto por linha, sem agrupar
+    assert list(serie.values) == [10, 19, 31, 40]
+
+
+def test_dispersao_mede_a_correlacao_e_avisa_que_nao_e_causa(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "d.xlsx", {
+        "Investimento": [100, 200, 300, 400],
+        "Conversoes": [10, 20, 30, 40],
+    })
+    config = {"tipo": "dispersao", "eixo_x": "Investimento",
+              "eixo_y": "Conversoes", "titulo": "Relação"}
+    serie, _, _, _ = preparar(ficheiro, config)
+    blocos = gr.montar_analise(serie, config, 4, False, None)
+
+    assert "1" in texto_de(blocos, "Relação")  # correlacao perfeita
+    assert "forte" in texto_de(blocos, "Relação")
+    assert "não é causa" in texto_de(blocos, "O que isto não diz")
+
+
+def test_correlacao_conferida_a_mao():
+    assert gr.correlacao([1, 2, 3, 4], [2, 4, 6, 8]) == pytest.approx(1.0)
+    assert gr.correlacao([1, 2, 3, 4], [8, 6, 4, 2]) == pytest.approx(-1.0)
+    assert gr.correlacao([1, 1, 1], [1, 2, 3]) is None
+
+
+def test_dispersao_com_agregacao_e_recusada():
+    with pytest.raises(gr.ErroDados, match="Tira a «agregacao»"):
+        gr.validar_grafico(grafico(tipo="dispersao"), 1)
+
+
+def test_dispersao_precisa_de_eixo_y():
+    with pytest.raises(gr.ErroDados, match="duas colunas"):
+        gr.validar_grafico({"tipo": "dispersao", "eixo_x": "a", "titulo": "t"}, 1)
+
+
+def test_dispersao_com_poucos_pontos_e_erro(tmp_path):
+    ficheiro = escrever_excel(tmp_path / "d.xlsx",
+                              {"a": [1, 2], "b": [3, 4]})
+    config = {"tipo": "dispersao", "eixo_x": "a", "eixo_y": "b", "titulo": "t"}
+    with pytest.raises(gr.ErroDados, match="pelo menos 3"):
+        preparar(ficheiro, config)
+
+
+def test_agregacao_continua_obrigatoria_nos_outros_tipos():
+    config = grafico()
+    config.pop("agregacao")
+    with pytest.raises(gr.ErroDados, match="Falta «agregacao»"):
+        gr.validar_grafico(config, 1)
 
 
 # ------------------------------------------------ capa, indice e paginas

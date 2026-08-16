@@ -19,7 +19,10 @@ plano, verifica os dados e gera o documento.
 
 - Lê **`.xlsx`, `.xlsm` e CSV**. No CSV deteta sozinho o separador (`;` ou `,`) e a
   codificação. Nos ficheiros Excel, aceita várias folhas.
-- Desenha gráficos de **barras**, **linhas** e **circular**.
+- Desenha gráficos de **barras**, **barras horizontais**, **linhas**, **área**,
+  **circular** e **dispersão**.
+- **Filtra linhas** se pedires — só um ano, só um canal, só acima de certo valor — e
+  escreve sempre no relatório o que ficou de fora.
 - Põe **várias séries no mesmo gráfico** — canais, campanhas ou regiões lado a lado, com
   legenda, para se compararem de relance em vez de em três gráficos com escalas
   diferentes.
@@ -120,7 +123,8 @@ Esta é a referência única. O `SKILL.md` aponta para aqui e não a repete.
 |---|---|---|
 | `titulo_relatorio` | sim | Título na primeira página do documento. |
 | `graficos` | sim | Lista de gráficos. Um gráfico por página. |
-| `tipo` | sim | `barras`, `linhas` ou `circular`. |
+| `tipo` | sim | `barras`, `barras_horizontais`, `linhas`, `area`, `circular` ou `dispersao`. |
+| `filtro` | não | Objeto `{"coluna": "Ano", "igual_a": 2025}`. Também aceita uma lista em `igual_a`, e `de`/`ate` para intervalos. |
 | `folha` | não | Nome da folha do Excel. Dispensável se o ficheiro tiver uma só folha, ou se for CSV. |
 | `eixo_x` | sim | Coluna que dá as categorias (meses, canais, regiões…). |
 | `eixo_y` | sim, exceto em `contagem` | Coluna com os números. |
@@ -200,6 +204,49 @@ Uma coluna de datas em texto só é tratada como linha do tempo quando a conven�
 
 O último caso é deliberado: falhar a análise é seguro, trocar Janeiro por Fevereiro não é.
 Um índice sazonal com os meses trocados estaria errado com ar de certo.
+
+## Filtrar linhas
+
+```json
+"filtro": { "coluna": "Ano", "igual_a": 2025 }
+"filtro": { "coluna": "Canal", "igual_a": ["Meta", "Google"] }
+"filtro": { "coluna": "Valor", "de": 1000, "ate": 5000 }
+```
+
+**Filtrar é esconder dados**, por isso o relatório escreve sempre o que ficou de fora:
+
+> *Conversões por campanha: filtro aplicado — «Ano» igual a «2025». Usadas 36 de 108
+> linhas; 72 ficaram de fora.*
+
+Um relatório que mostra 2025 sem dizer que ignorou 2023 e 2024 é enganador. Se o filtro
+não deixar nenhuma linha, para com erro em vez de gerar um documento vazio.
+
+## Os seis tipos de gráfico
+
+| Tipo | Para quê |
+|---|---|
+| `barras` | Comparar categorias. O caso normal. |
+| `barras_horizontais` | O mesmo, mas com **nomes compridos** — «Campanha Black Friday 2025 — Zona Norte» não cabe por baixo de uma barra em pé. |
+| `linhas` | Evolução ao longo do tempo. |
+| `area` | Evolução com volume. Com várias séries, empilhadas: vê-se quanto cada uma contribui para o total. |
+| `circular` | Repartição de um total. Recusa valores negativos. |
+| `dispersao` | **Relação entre duas colunas de números** — investimento e conversões, por exemplo. Um ponto por linha, sem agrupar nada. |
+
+### A dispersão é diferente das outras
+
+Não agrupa por categoria: cruza duas colunas numéricas, um ponto por linha do ficheiro.
+Por isso não leva `agregacao` nem `serie`, e a análise também é outra — mede o
+**coeficiente de correlação de Pearson**, com o critério ao lado:
+
+> **Relação.** Coeficiente de correlação de Pearson de 0,99 — correlação forte e
+> positiva: sobem juntas (critério: <0,3 fraca, 0,3–0,7 moderada, >0,7 forte).
+>
+> **O que isto não diz.** Correlação não é causa. Duas colunas subirem juntas não
+> significa que uma faça a outra subir: pode haver um terceiro fator, ou ser
+> coincidência. Este relatório mede a relação; não a explica.
+
+Esse último parágrafo aparece **sempre**. É a leitura errada mais fácil de fazer, e a que
+faz um relatório perder credibilidade.
 
 ## Várias séries no mesmo gráfico
 
