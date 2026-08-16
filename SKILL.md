@@ -145,6 +145,9 @@ de escrever o plano:
 - **`eixo_temporal`** — só é preciso quando os rótulos são invulgares
   (`Semana 1`, `P1`). Meses em português, trimestres, anos e datas são
   reconhecidos sozinhos.
+- **`idioma`**, ao nível do plano — `pt` por omissão, `en` para o relatório sair
+  em inglês. **Perguntar se o relatório é para alguém que não lê português**;
+  numa candidatura internacional, um relatório em inglês vale mais.
 - **`analise`**, ao nível do plano — `completa` por omissão. `curta` só se o
   utilizador disser que quer apenas o gráfico. `detalhada` repete a análise
   inteira para **cada** série: com três canais, o relatório fica cerca de duas

@@ -143,6 +143,7 @@ E, ao nível do plano (fora da lista `graficos`):
 
 | Campo | Obrigatório | O que é |
 |---|---|---|
+| `idioma` | não | `pt` (por omissão) ou `en`. Traduz o documento inteiro, incluindo os formatos de número e de data. |
 | `analise` | não | `completa` (por omissão), `curta` (só o gráfico e uma frase) ou `detalhada` (repete a análise inteira para cada série). |
 
 Qualquer campo que não esteja nesta tabela é recusado com erro. É de propósito:
@@ -418,6 +419,29 @@ Sem `meta`, esta secção não aparece — e o resto do relatório continua a us
 vocabulário técnico com significado fixo: `tendência crescente`, `dispersão elevada`,
 `ajuste moderado`, `valor atípico`. Cada um com o número e o critério à frente, para quem
 lê poder discordar do critério em vez de discordar da opinião.
+
+## Relatório em inglês
+
+```json
+{ "titulo_relatorio": "Sales report", "idioma": "en", "graficos": [ ... ] }
+```
+
+Traduz **o documento inteiro** — títulos, análise, previsão, meta e notas:
+
+> **Trend.** Linear regression with a slope of +20 per period and R² of 1 — strong fit
+> (criterion: <0.3 weak, 0.3–0.7 moderate, >0.7 strong). Reading: upward trend.
+
+**Os números também mudam.** Em português `2.058.682,50`; em inglês `2,058,682.50`. E as
+datas passam a ISO (`2026-08-16`), porque `03/04/2026` seria ambíguo para quem lê em
+inglês. Traduzir o texto e deixar os números à portuguesa daria um documento pior do que
+não traduzir.
+
+**Como é que se garante que não fica meio traduzido:** há um teste que gera um relatório
+em inglês e **falha se encontrar uma única palavra portuguesa** no documento. Sem isso,
+bastava esquecer uma frase para sair um relatório com as duas línguas — pior do que só
+português.
+
+As mensagens do terminal continuam em português. Ninguém põe o terminal no currículo.
 
 ## Não sabes o que pedir? Pergunta ao ficheiro
 

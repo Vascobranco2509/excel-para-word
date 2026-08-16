@@ -822,6 +822,94 @@ def test_tabela_truncada_avisa_antes_de_gerar(tmp_path):
     assert any("ficariam de fora" in a for a in avisos)
 
 
+# ---------------------------------------------------- relatorio em ingles
+
+# Palavras portuguesas que so aparecem se alguma frase ficou por traduzir.
+# Um documento meio traduzido e pior do que um documento so em portugues.
+MARCAS_PORTUGUESAS = (
+    " é ", " está", " são ", " não ", " mais ", " por ", " com ", " dos ",
+    " das ", " uma ", " uma", "ção", "ções", "ário", " que ", " foi ",
+    " tem ", " até ", "média", "Total é", "linhas", "categorias", "gráfico",
+    # o nome da agregacao vem do plano, escrito em portugues, e chegou a sair
+    # tal e qual no meio de uma frase inglesa: «(soma)»
+    "soma", "contagem",
+)
+
+
+def gerar_em(tmp_path: Path, idioma: str):
+    from docx import Document
+
+    ficheiro = escrever_excel(tmp_path / "d.xlsx", {
+        "Periodo": [f"2024-{m:02d}" for m in range(1, 13)] * 2,
+        "Canal": ["Online"] * 12 + ["Loja"] * 12,
+        "Valor": list(range(100, 340, 10)),
+    })
+    plano = tmp_path / f"{idioma}.json"
+    plano.write_text(json.dumps({
+        "titulo_relatorio": "Sales report", "idioma": idioma,
+        "graficos": [{
+            "tipo": "linhas", "eixo_x": "Periodo", "eixo_y": "Valor",
+            "agregacao": "soma", "titulo": "Sales over time",
+            "eixo_temporal": True, "coluna_periodo": "Periodo",
+            "previsao": 3, "meta": {"valor": 4000, "ambito": "total"},
+        }, {
+            "tipo": "barras", "eixo_x": "Canal", "eixo_y": "Valor",
+            "agregacao": "soma", "titulo": "Sales by channel",
+            "tabela_dados": True,
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    saida = tmp_path / f"{idioma}.docx"
+    correr_cli("--dados", str(ficheiro), "--plano", str(plano), "--saida", str(saida))
+    return Document(str(saida))
+
+
+def test_relatorio_em_ingles_nao_deixa_portugues(tmp_path):
+    """O teste que impede a traducao ficar por metade."""
+    documento = gerar_em(tmp_path, "en")
+    texto = "\n".join(p.text for p in documento.paragraphs)
+    for tabela in documento.tables:
+        for linha in tabela.rows:
+            texto += "\n" + " ".join(c.text for c in linha.cells)
+
+    encontradas = [m for m in MARCAS_PORTUGUESAS if m in texto]
+    assert not encontradas, (
+        f"ficou português no relatório em inglês: {encontradas}\n\n{texto[:1500]}"
+    )
+
+
+def test_relatorio_em_ingles_tem_as_seccoes_certas(tmp_path):
+    documento = gerar_em(tmp_path, "en")
+    texto = "\n".join(p.text for p in documento.paragraphs)
+
+    for esperado in ("Contents", "Analysis", "Scope", "Trend", "Forecast",
+                     "Target", "Notes on the data", "Report generated on"):
+        assert esperado in texto, f"faltou «{esperado}»"
+
+
+def test_numeros_a_inglesa_no_relatorio_ingles(tmp_path):
+    documento = gerar_em(tmp_path, "en")
+    texto = "\n".join(p.text for p in documento.paragraphs)
+    assert "5,160" in texto, "os números deviam usar a vírgula dos milhares"
+    assert "5.160" not in texto
+
+
+def test_portugues_continua_a_ser_o_normal(tmp_path):
+    documento = gerar_em(tmp_path, "pt")
+    texto = "\n".join(p.text for p in documento.paragraphs)
+    assert "Análise" in texto
+    assert "5.160" in texto
+
+
+def test_idioma_desconhecido_e_recusado(tmp_path):
+    plano = tmp_path / "p.json"
+    plano.write_text(json.dumps({
+        "titulo_relatorio": "T", "idioma": "fr", "graficos": [grafico()],
+    }, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(gr.ErroDados, match="idioma"):
+        gr.ler_plano(plano)
+    gr.definir_idioma("pt")
+
+
 # ------------------------------------------------------ sugerir graficos
 
 

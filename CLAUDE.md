@@ -167,6 +167,16 @@ testes/test_gerar_relatorio.py
   é número tem de vir **antes** dessa regra também (num CSV é tudo texto).
 - **Não sugerir cruzar um total com uma parte dele.** «confirmados» contra
   «confirmados_norte» dá correlação por construção e não diz nada.
+- **Relatório em inglês com `idioma: "en"`** (decisão de 16/08/2026). Traduz o
+  documento inteiro, **incluindo os formatos de número e de data** — texto em
+  inglês com números à portuguesa daria um documento pior do que não traduzir.
+  As mensagens do terminal ficam em português.
+- **Todas as frases do documento vivem no dicionário `FRASES`**, com uma chave e
+  as duas versões. Nunca escrever texto do relatório diretamente numa f-string:
+  ficaria por traduzir e ninguém dava por isso.
+- **Há um teste que falha se aparecer uma palavra portuguesa num relatório em
+  inglês.** É ele que torna impossível publicar a tradução por metade. Se
+  acrescentares uma frase nova ao documento, é esse teste que te apanha.
 - **Causas e recomendações ficam de fora para sempre.** O ficheiro tem números,
   não tem o mundo; e recomendar exige orçamento, capacidade e estratégia que não
   estão numa folha de cálculo. Não voltar a propor.

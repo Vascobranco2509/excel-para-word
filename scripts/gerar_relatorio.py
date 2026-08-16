@@ -138,8 +138,353 @@ class ErroDados(Exception):
 # ---------------------------------------------------------------- utilitarios
 
 
+IDIOMAS = ("pt", "en")
+_idioma = "pt"
+
+# Todas as frases que vao para o DOCUMENTO. As mensagens do terminal ficam em
+# portugues: ninguem poe o terminal no curriculo, e traduzir tudo dobrava o
+# trabalho sem ninguem ganhar nada.
+FRASES = {
+    # capa e estrutura
+    "gerado_em": {"pt": "Relatório gerado em {data}",
+                  "en": "Report generated on {data}"},
+    "a_partir_de": {"pt": "A partir de {ficheiro}", "en": "From {ficheiro}"},
+    "indice": {"pt": "Índice", "en": "Contents"},
+    "analise": {"pt": "Análise", "en": "Analysis"},
+    "analise_de": {"pt": "Análise — {nome}", "en": "Analysis — {nome}"},
+    "notas_dados": {"pt": "Notas sobre os dados", "en": "Notes on the data"},
+    "sem_problemas": {"pt": "Não foram encontrados problemas nos dados de origem.",
+                      "en": "No problems were found in the source data."},
+    "com_problemas": {"pt": "Foram encontrados {n} problema(s) nos dados de origem:",
+                      "en": "{n} problem(s) were found in the source data:"},
+    "como_agrupados": {"pt": "Como os dados foram agrupados:",
+                       "en": "How the data was grouped:"},
+    "registos": {"pt": "Registos", "en": "Records"},
+    # frase descritiva
+    "descr_dispersao": {
+        "pt": ("Cada ponto é uma linha do ficheiro: «{x}» na horizontal e «{y}» na "
+               "vertical, a partir de {n} linhas. O gráfico mostra como as duas "
+               "colunas se relacionam."),
+        "en": ("Each point is one row of the file: «{x}» horizontally and «{y}» "
+               "vertically, from {n} rows. The chart shows how the two columns "
+               "relate to each other."),
+    },
+    "descr_o_que_soma": {"pt": "o total de «{y}»", "en": "the total of «{y}»"},
+    "descr_o_que_media": {"pt": "a média de «{y}»", "en": "the average of «{y}»"},
+    "descr_o_que_registos": {"pt": "o número de registos", "en": "the number of records"},
+    "descr_o_que_contagem": {"pt": "a contagem de «{y}»", "en": "the count of «{y}»"},
+    "descr_mostra": {
+        "pt": "O gráfico mostra {o_que} por «{x}», a partir de {n} linhas agrupadas em {c} categorias.",
+        "en": "The chart shows {o_que} by «{x}», from {n} rows grouped into {c} categories.",
+    },
+    "descr_total": {"pt": "O total é {v}.", "en": "The total is {v}."},
+    "descr_media": {"pt": "A média das categorias é {v}.",
+                    "en": "The average across categories is {v}."},
+    "descr_total_registos": {"pt": "O total de registos é {v}.",
+                             "en": "The total number of records is {v}."},
+    "descr_extremos": {
+        "pt": "O valor mais alto é {alto}, em «{cat_alto}», e o mais baixo é {baixo}, em «{cat_baixo}».",
+        "en": "The highest value is {alto}, in «{cat_alto}», and the lowest is {baixo}, in «{cat_baixo}».",
+    },
+    "descr_fatia": {"pt": "A maior fatia, «{cat}», representa {p}% do total.",
+                    "en": "The largest slice, «{cat}», is {p}% of the total."},
+    # etiquetas dos blocos
+    "b_ambito": {"pt": "Âmbito", "en": "Scope"},
+    "b_amplitude": {"pt": "Amplitude", "en": "Range"},
+    "b_dispersao": {"pt": "Dispersão", "en": "Dispersion"},
+    "b_concentracao": {"pt": "Concentração", "en": "Concentration"},
+    "b_atipicos": {"pt": "Valores atípicos", "en": "Outliers"},
+    "b_evolucao": {"pt": "Evolução", "en": "Change over time"},
+    "b_tendencia": {"pt": "Tendência", "en": "Trend"},
+    "b_crescimento": {"pt": "Crescimento médio", "en": "Average growth"},
+    "b_sazonalidade": {"pt": "Sazonalidade", "en": "Seasonality"},
+    "b_previsao": {"pt": "Previsão", "en": "Forecast"},
+    "b_meta": {"pt": "Meta", "en": "Target"},
+    "b_ano_a_ano": {"pt": "Ano a ano", "en": "Year by year"},
+    "b_comparacao_anos": {"pt": "Comparação entre anos", "en": "Comparison across years"},
+    "b_comparacao_series": {"pt": "Comparação entre séries", "en": "Comparison across series"},
+    "b_por_serie": {"pt": "Por série", "en": "By series"},
+    "b_relacao": {"pt": "Relação", "en": "Relationship"},
+    "b_nao_diz": {"pt": "O que isto não diz", "en": "What this does not say"},
+    # criterios e termos
+    "criterio": {"pt": "critério: <{baixo}{s} {a}, {baixo}–{alto}{s} {b}, >{alto}{s} {c}",
+                 "en": "criterion: <{baixo}{s} {a}, {baixo}–{alto}{s} {b}, >{alto}{s} {c}"},
+    "t_baixa": {"pt": "baixa", "en": "low"},
+    "t_moderada": {"pt": "moderada", "en": "moderate"},
+    "t_elevada": {"pt": "elevada", "en": "high"},
+    "t_fraco": {"pt": "fraco", "en": "weak"},
+    "t_moderado": {"pt": "moderado", "en": "moderate"},
+    "t_forte": {"pt": "forte", "en": "strong"},
+    "t_fraca": {"pt": "fraca", "en": "weak"},
+    "t_forte_f": {"pt": "forte", "en": "strong"},
+    # analise
+    "a_ambito": {
+        "pt": "{c} categorias de «{x}», a partir de {n} linhas. Total {total}; média {media}; mediana {mediana}.",
+        "en": "{c} categories of «{x}», from {n} rows. Total {total}; average {media}; median {mediana}.",
+    },
+    "a_amplitude": {
+        "pt": "Máximo {alto} em «{cat_alto}»; mínimo {baixo} em «{cat_baixo}». Amplitude {amp}",
+        "en": "Maximum {alto} in «{cat_alto}»; minimum {baixo} in «{cat_baixo}». Range {amp}",
+    },
+    "a_racio": {"pt": "; rácio de {r}.", "en": "; ratio of {r}."},
+    "a_sem_racio": {"pt": " (o mínimo é zero ou negativo, logo sem rácio).",
+                    "en": " (the minimum is zero or negative, so no ratio)."},
+    "a_dispersao": {
+        "pt": "Desvio-padrão {dp}; coeficiente de variação {cv}% — dispersão {termo} ({crit}).",
+        "en": "Standard deviation {dp}; coefficient of variation {cv}% — {termo} dispersion ({crit}).",
+    },
+    "a_concentracao": {
+        "pt": "A maior categoria representa {p}% do total — concentração {termo} ({crit}).",
+        "en": "The largest category is {p}% of the total — {termo} concentration ({crit}).",
+    },
+    "a_tres_maiores": {"pt": " As três maiores valem {p}%.",
+                       "en": " The three largest add up to {p}%."},
+    "a_atipicos_nao": {
+        "pt": "Não avaliados — o método de Tukey (1,5×IQR) precisa de pelo menos {min} categorias e há {n}.",
+        "en": "Not assessed — Tukey's method (1.5×IQR) needs at least {min} categories and there are {n}.",
+    },
+    "a_atipicos_ha": {
+        "pt": "{quantos} fora do intervalo interquartil alargado (método de Tukey, 1,5×IQR): {lista}.",
+        "en": "{quantos} outside the extended interquartile range (Tukey's method, 1.5×IQR): {lista}.",
+    },
+    "a_atipicos_nenhum": {
+        "pt": "Nenhuma categoria fora do intervalo interquartil alargado (método de Tukey, 1,5×IQR).",
+        "en": "No category falls outside the extended interquartile range (Tukey's method, 1.5×IQR).",
+    },
+    "a_um_valor": {"pt": "1 valor", "en": "1 value"},
+    "a_n_valores": {"pt": "{n} valores", "en": "{n} values"},
+    "a_categorico": {
+        "pt": "Não analisada — «{x}» é um eixo categórico, não uma linha do tempo. Tendências e regressões só têm significado quando a ordem das categorias é a ordem do tempo.",
+        "en": "Not analysed — «{x}» is a categorical axis, not a timeline. Trends and regressions only mean something when the order of the categories is the order of time.",
+    },
+    "a_evolucao": {
+        "pt": "Do primeiro ao último período: {var}",
+        "en": "From the first to the last period: {var}",
+    },
+    "a_variacoes": {
+        "pt": " Das {n} variações período a período, {mais} positivas e {menos} negativas",
+        "en": " Of the {n} period-to-period changes, {mais} were positive and {menos} negative",
+    },
+    "a_monotona_cresc": {"pt": " — série monótona crescente.",
+                         "en": " — strictly increasing series."},
+    "a_monotona_nao_dec": {"pt": " — série monótona não decrescente (há períodos iguais).",
+                           "en": " — non-decreasing series (some periods are equal)."},
+    "a_monotona_dec": {"pt": " — série monótona decrescente.",
+                       "en": " — strictly decreasing series."},
+    "a_monotona_nao_cresc": {"pt": " — série monótona não crescente (há períodos iguais).",
+                             "en": " — non-increasing series (some periods are equal)."},
+    "a_nao_monotona": {"pt": " — série não monótona.", "en": " — not a monotonic series."},
+    "a_maior_subida": {
+        "pt": " Maior subida: «{de}» → «{para}», +{v}. Maior descida: «{de2}» → «{para2}», {v2}.",
+        "en": " Largest rise: «{de}» → «{para}», +{v}. Largest fall: «{de2}» → «{para2}», {v2}.",
+    },
+    "a_regressao_nao": {
+        "pt": "Regressão não calculada — são precisos pelo menos {min} períodos e há {n}.",
+        "en": "Regression not calculated — at least {min} periods are needed and there are {n}.",
+    },
+    "a_regressao": {
+        "pt": "Regressão linear com declive de {declive} por período e R² de {r2} — ajuste {ajuste} ({crit}). Leitura: {leitura}.",
+        "en": "Linear regression with a slope of {declive} per period and R² of {r2} — {ajuste} fit ({crit}). Reading: {leitura}.",
+    },
+    "l_indefinida": {"pt": "tendência indefinida: os dados não se aproximam de uma reta",
+                     "en": "no clear trend: the data does not follow a straight line"},
+    "l_crescente": {"pt": "tendência crescente", "en": "upward trend"},
+    "l_decrescente": {"pt": "tendência decrescente", "en": "downward trend"},
+    "l_estavel": {"pt": "tendência estável", "en": "flat trend"},
+    "a_cresc_nao": {"pt": "Não calculado — {razao}.", "en": "Not calculated — {razao}."},
+    "a_cresc_poucos": {"pt": "são precisos pelo menos {min} períodos e há {n}",
+                       "en": "at least {min} periods are needed and there are {n}"},
+    "a_cresc_zeros": {"pt": "a série tem valores nulos ou negativos, e a taxa geométrica não existe",
+                      "en": "the series has zero or negative values, so the geometric rate does not exist"},
+    "a_crescimento": {"pt": "Taxa de crescimento média geométrica de {taxa}% por período.",
+                      "en": "Average geometric growth rate of {taxa}% per period."},
+    "a_saz_nao": {
+        "pt": "Não avaliada — o índice sazonal precisa de pelo menos {min} ciclos anuais completos de dados mensais, e não foi possível identificá-los nesta série.",
+        "en": "Not assessed — the seasonal index needs at least {min} complete yearly cycles of monthly data, and they could not be identified in this series.",
+    },
+    "a_saz_negativos": {
+        "pt": "Não avaliada — o índice sazonal é uma razão entre a média de cada mês e a média geral, e só tem significado quando todos os valores são positivos. Esta série tem valores nulos ou negativos, e o índice daria um número sem sentido.",
+        "en": "Not assessed — the seasonal index is a ratio between each month's average and the overall average, and only means something when every value is positive. This series has zero or negative values, and the index would be meaningless.",
+    },
+    "a_saz": {
+        "pt": "Índice sazonal sobre {ciclos} ciclos anuais (média de cada mês a dividir pela média geral). Mês mais forte: {forte}, índice {i_forte} — {p_forte}% acima do mês típico. Mês mais fraco: {fraco}, índice {i_fraco} — {p_fraco}% abaixo.",
+        "en": "Seasonal index over {ciclos} yearly cycles (each month's average divided by the overall average). Strongest month: {forte}, index {i_forte} — {p_forte}% above the typical month. Weakest month: {fraco}, index {i_fraco} — {p_fraco}% below.",
+    },
+    "a_ano_a_ano": {"pt": "Totais por ano — {partes}.", "en": "Totals by year — {partes}."},
+    "a_comparacao_anos": {
+        "pt": "Variação interanual — {variacoes}. {pos} de {total} variações foram positivas. Do primeiro ao último ano: {acumulada}",
+        "en": "Year-on-year change — {variacoes}. {pos} of {total} changes were positive. From the first to the last year: {acumulada}",
+    },
+    "a_anos_extremos": {
+        "pt": ". Ano mais alto: {alto} ({v_alto}); mais baixo: {baixo} ({v_baixo}).",
+        "en": ". Highest year: {alto} ({v_alto}); lowest: {baixo} ({v_baixo}).",
+    },
+    # previsao
+    "p_curta": {
+        "pt": "Não calculada — são precisos pelo menos {min} períodos observados e há {n}.",
+        "en": "Not calculated — at least {min} observed periods are needed and there are {n}.",
+    },
+    "p_horizonte": {
+        "pt": " Pediste {pedido} períodos, mas o máximo defensável para uma série de {n} é {max} (um terço da série, no máximo {teto}); extrapolar mais longe seria ficção.",
+        "en": " You asked for {pedido} periods, but the defensible maximum for a series of {n} is {max} (one third of the series, at most {teto}); extrapolating further would be fiction.",
+    },
+    "p_ajuste": {
+        "pt": "Não calculada — {detalhe}. Extrapolar uma reta que não descreve os dados dava um número com ar de rigor e sem rigor nenhum.",
+        "en": "Not calculated — {detalhe}. Extrapolating a line that does not describe the data would give a number that looks rigorous and is not.",
+    },
+    "p_ajuste_fraco": {"pt": "o ajuste da tendência é fraco (R² de {r2}, mínimo {min})",
+                       "en": "the trend fit is weak (R² of {r2}, minimum {min})"},
+    "p_sem_reta": {"pt": "não foi possível ajustar uma tendência",
+                   "en": "no trend line could be fitted"},
+    "p_metodo_saz": {
+        "pt": "tendência linear sobre a série dessazonalizada, com o fator sazonal reaplicado a cada período previsto",
+        "en": "linear trend on the deseasonalised series, with the seasonal factor reapplied to each forecast period",
+    },
+    "p_metodo_simples": {"pt": "tendência linear sobre a série observada",
+                         "en": "linear trend on the observed series"},
+    "p_texto": {
+        "pt": "Método: {metodo}, ajustada a {n} períodos (R² de {r2}). Intervalos a {conf}% — {linhas}.",
+        "en": "Method: {metodo}, fitted to {n} periods (R² of {r2}). {conf}% intervals — {linhas}.",
+    },
+    "p_entre": {"pt": "{rotulo} entre {inf} e {sup}", "en": "{rotulo} between {inf} and {sup}"},
+    "p_negativos": {
+        "pt": " Atenção: {n} período(s) previstos descem abaixo de zero, apesar de nenhum valor observado ser negativo — sinal de que a reta deixou de ser adequada neste horizonte.",
+        "en": " Note: {n} forecast period(s) fall below zero even though no observed value is negative — a sign that the line no longer fits at this horizon.",
+    },
+    "p_largos": {
+        "pt": " Em {n} período(s) o intervalo é mais largo do que o próprio valor previsto: a incerteza é da ordem de grandeza da previsão.",
+        "en": " In {n} period(s) the interval is wider than the forecast value itself: the uncertainty is of the same order as the forecast.",
+    },
+    "p_pressupoe": {
+        "pt": " Pressupõe que a tendência e a sazonalidade observadas se mantêm. Não incorpora nada que não esteja no ficheiro.",
+        "en": " It assumes the observed trend and seasonality continue. It takes in nothing that is not in the file.",
+    },
+    "p_categorico": {
+        "pt": "Não calculada — «{x}» é um eixo categórico. Prever o período seguinte só faz sentido quando existe um período seguinte.",
+        "en": "Not calculated — «{x}» is a categorical axis. Forecasting the next period only makes sense when there is a next period.",
+    },
+    # meta
+    "m_zero": {
+        "pt": "{o_que} é {obs}, face a uma meta de zero. Sem meta positiva não há percentagem a calcular.",
+        "en": "{o_que} is {obs}, against a target of zero. With no positive target there is no percentage to compute.",
+    },
+    "m_total": {"pt": "O total", "en": "The total"},
+    "m_media": {"pt": "A média das categorias", "en": "The average across categories"},
+    "m_texto": {
+        "pt": "Meta definida: {alvo}. {o_que} é {obs} — {p}% da meta, {dif} {posicao}.",
+        "en": "Target set: {alvo}. {o_que} is {obs} — {p}% of target, {dif} {posicao}.",
+    },
+    "m_acima": {"pt": "acima da meta", "en": "above target"},
+    "m_abaixo": {"pt": "abaixo da meta", "en": "below target"},
+    "m_exata": {"pt": "exatamente na meta", "en": "exactly on target"},
+    "m_por_categoria": {
+        "pt": "Meta definida: {alvo} por categoria. {n} de {total} categorias atingiram-na ({p}%).",
+        "en": "Target set: {alvo} per category. {n} of {total} categories met it ({p}%).",
+    },
+    "m_mais_distantes": {"pt": " Mais distantes da meta: {lista}.",
+                         "en": " Furthest from target: {lista}."},
+    "m_abaixo_de": {"pt": "«{cat}» com {v} ({falta} abaixo)",
+                    "en": "«{cat}» at {v} ({falta} below)"},
+    "m_defice": {"pt": " Somando o que faltou a cada uma, o défice total é {v}.",
+                 "en": " Adding up what each one missed, the total shortfall is {v}."},
+    "m_nenhuma_abaixo": {"pt": " Nenhuma categoria ficou abaixo.",
+                         "en": " No category fell below."},
+    "m_media_categoria": {"pt": " A média por categoria é {media}, {p}% da meta.",
+                          "en": " The average per category is {media}, {p}% of target."},
+    "m_por_serie": {
+        "pt": "Meta definida: {alvo} por série. {n} de {total} séries atingiram-na",
+        "en": "Target set: {alvo} per series. {n} of {total} series met it",
+    },
+    "m_series_abaixo": {"pt": " Abaixo da meta: {lista}.", "en": " Below target: {lista}."},
+    # series
+    "s_comparacao": {"pt": "{n} séries, {origem}. Por {o_que}: {partes}.",
+                     "en": "{n} series, {origem}. By {o_que}: {partes}."},
+    "s_uma_por_coluna": {"pt": "uma por coluna", "en": "one per column"},
+    "s_de": {"pt": "de «{coluna}»", "en": "from «{coluna}»"},
+    "s_total": {"pt": "total", "en": "total"},
+    "s_media": {"pt": "média", "en": "average"},
+    "s_crescimento": {
+        "pt": " Do primeiro ao último período, «{maior}» variou {v_maior}%",
+        "en": " From the first to the last period, «{maior}» changed by {v_maior}%",
+    },
+    "s_e_menor": {"pt": " e «{menor}» {v_menor}%.", "en": " and «{menor}» {v_menor}%."},
+    "s_por_serie": {
+        "pt": "«{nome}»: máximo {alto} em «{cat_alto}», mínimo {baixo} em «{cat_baixo}»",
+        "en": "«{nome}»: maximum {alto} in «{cat_alto}», minimum {baixo} in «{cat_baixo}»",
+    },
+    "s_tend_cresc": {"pt": ", tendência crescente", "en": ", upward trend"},
+    "s_tend_decresc": {"pt": ", tendência decrescente", "en": ", downward trend"},
+    "s_tend_indef": {"pt": ", tendência indefinida", "en": ", no clear trend"},
+    # dispersao
+    "d_ambito": {
+        "pt": "{n} pontos, um por linha do ficheiro. «{x}» vai de {x_min} a {x_max}; «{y}» vai de {y_min} a {y_max}.",
+        "en": "{n} points, one per row of the file. «{x}» ranges from {x_min} to {x_max}; «{y}» ranges from {y_min} to {y_max}.",
+    },
+    "d_sem_variacao": {
+        "pt": "Não calculada — uma das colunas tem sempre o mesmo valor, e sem variação não há relação que medir.",
+        "en": "Not calculated — one of the columns always has the same value, and with no variation there is no relationship to measure.",
+    },
+    "d_relacao": {
+        "pt": "Coeficiente de correlação de Pearson de {r} — correlação {forca} e {sentido} ({crit}, em valor absoluto).",
+        "en": "Pearson correlation coefficient of {r} — {forca} and {sentido} correlation ({crit}, in absolute value).",
+    },
+    "d_positiva": {"pt": "positiva: sobem juntas", "en": "positive: they rise together"},
+    "d_negativa": {"pt": "negativa: quando uma sobe, a outra desce",
+                   "en": "negative: when one rises, the other falls"},
+    "d_nao_causa": {
+        "pt": "Correlação não é causa. Duas colunas subirem juntas não significa que uma faça a outra subir: pode haver um terceiro fator, ou ser coincidência. Este relatório mede a relação; não a explica.",
+        "en": "Correlation is not causation. Two columns rising together does not mean one makes the other rise: there may be a third factor, or it may be coincidence. This report measures the relationship; it does not explain it.",
+    },
+    "n_temporal": {"pt": "{titulo}: «{x}» tratado como linha do tempo.",
+                   "en": "{titulo}: «{x}» treated as a timeline."},
+    "n_agrupadas": {
+        "pt": "{titulo}: {n} linhas agrupadas em {c} categorias de «{x}» ({agregacao}).",
+        "en": "{titulo}: {n} rows grouped into {c} categories of «{x}» ({agregacao}).",
+    },
+    # O nome da agregacao vem do plano, que e sempre escrito em portugues.
+    # Num relatorio em ingles tem de ser traduzido: «(soma)» no meio de uma
+    # frase inglesa nao se percebe.
+    "agr_soma": {"pt": "soma", "en": "sum"},
+    "agr_media": {"pt": "média", "en": "average"},
+    "agr_contagem": {"pt": "contagem", "en": "count"},
+    "n_datas": {"pt": "A coluna «{coluna}» foi reconhecida como datas.",
+                "en": "Column «{coluna}» was recognised as dates."},
+    "n_csv": {"pt": "CSV lido com «{sep}» como separador e codificação {cod}.",
+              "en": "CSV read with «{sep}» as separator and {cod} encoding."},
+}
+
+
+def definir_idioma(idioma: str) -> None:
+    """Idioma do DOCUMENTO. As mensagens do terminal ficam sempre em portugues.
+
+    E uma variavel do modulo de proposito: o alternativo era acrescentar um
+    parametro a trinta funcoes, e o programa trata de um plano de cada vez.
+    """
+    global _idioma
+    _idioma = idioma if idioma in IDIOMAS else "pt"
+
+
+def em_ingles() -> bool:
+    return _idioma == "en"
+
+
+def trocar_separadores(texto: str) -> str:
+    """1,234.56 -> 1.234,56. O Python formata a inglesa; o portugues e ao contrario."""
+    return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def t(chave: str, **valores) -> str:
+    """Devolve a frase no idioma do relatorio."""
+    modelo = FRASES[chave][_idioma]
+    return modelo.format(**valores) if valores else modelo
+
+
 def formatar_numero(valor) -> str:
-    """Formata um numero a portuguesa: 1.234 e 1.234,56."""
+    """Formata um numero a portuguesa: 1.234 e 1.234,56.
+
+    Em ingles fica 1,234.56. Traduzir o texto e deixar os numeros a
+    portuguesa daria um documento pior do que nao traduzir nada.
+    """
     if valor is None:
         return "-"
     try:
@@ -152,12 +497,12 @@ def formatar_numero(valor) -> str:
     except (TypeError, ValueError):
         return str(valor)
     if abs(numero - round(numero)) < 1e-9:
-        return f"{int(round(numero)):,}".replace(",", ".")
+        inteiro = f"{int(round(numero)):,}"
+        return inteiro if em_ingles() else inteiro.replace(",", ".")
     texto = f"{numero:,.2f}"
     if texto.endswith("0"):
         texto = texto[:-1]  # 56,20% le-se mal; 56,2% le-se bem
-    # troca os separadores anglo-saxonicos pelos portugueses
-    return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+    return texto if em_ingles() else trocar_separadores(texto)
 
 
 def formatar_com_precisao(valor) -> str:
@@ -191,13 +536,14 @@ def formatar_com_precisao(valor) -> str:
         inteiro, _, decimal = texto.partition(".")
         decimal = decimal.rstrip("0").ljust(2, "0")
         texto = f"{inteiro}.{decimal}"
-    return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+    return texto if em_ingles() else trocar_separadores(texto)
 
 
 def formatar_categoria(valor) -> str:
     """Formata o rotulo de uma categoria; datas ficam em dd/mm/aaaa."""
     if isinstance(valor, pd.Timestamp):
-        return valor.strftime("%d/%m/%Y")
+        # em ingles usa-se ISO: 03/04/2026 seria ambiguo para quem le
+        return valor.strftime("%Y-%m-%d" if em_ingles() else "%d/%m/%Y")
     if valor is None:
         return "(vazio)"
     try:
@@ -483,11 +829,20 @@ def ler_plano(caminho: Path) -> dict:
             "repete a análise inteira para cada série."
         )
 
-    desconhecidas = sorted(set(plano) - {"titulo_relatorio", "graficos", "analise"})
+    idioma = plano.get("idioma", "pt")
+    if idioma not in IDIOMAS:
+        raise ErroDados(
+            f"O campo «idioma» do plano é «{idioma}», que não existe. "
+            f"Idiomas disponíveis: {listar(IDIOMAS)} — «pt» por omissão."
+        )
+    definir_idioma(idioma)
+
+    desconhecidas = sorted(
+        set(plano) - {"titulo_relatorio", "graficos", "analise", "idioma"})
     if desconhecidas:
         raise ErroDados(
             f"O plano tem campos que não existem: {listar(desconhecidas)}. "
-            "Campos aceites: «titulo_relatorio», «graficos», «analise»."
+            "Campos aceites: «titulo_relatorio», «graficos», «analise», «idioma»."
         )
 
     for indice, grafico in enumerate(graficos, start=1):
@@ -747,10 +1102,7 @@ class FonteCSV:
         texto, codificacao = self._ler_texto(caminho)
         separador = detetar_separador(texto)
 
-        self.notas.append(
-            f"CSV lido com «{separador}» como separador e codificação "
-            f"{codificacao}."
-        )
+        self.notas.append(t("n_csv", sep=separador, cod=codificacao))
         # As linhas de metadados por cima da tabela tem menos colunas do que
         # ela, e o pandas recusa-se a ler um ficheiro assim. Conta-se primeiro
         # a linha mais larga e dao-se nomes a todas as colunas.
@@ -1014,7 +1366,7 @@ def reconhecer_datas(df: pd.DataFrame, coluna: str, onde: str,
 
     df = df.copy()
     df[coluna] = convertidas
-    acrescentar(notas, f"A coluna «{coluna}» foi reconhecida como datas.")
+    acrescentar(notas, t("n_datas", coluna=coluna))
     return df
 
 
@@ -1333,15 +1685,14 @@ def preparar_dados(fonte, grafico: dict, indice: int,
     if temporal is None:
         temporal = parece_temporal(serie.index)
     if temporal:
-        notas.append(f"{grafico['titulo']}: «{eixo_x}» tratado como linha do tempo.")
+        notas.append(t("n_temporal", titulo=grafico["titulo"], x=eixo_x))
 
     serie_anual = calcular_serie_anual(df, grafico, eixo_x, eixo_y, folha, avisos)
 
     if len(df) > len(serie):
-        notas.append(
-            f"{grafico['titulo']}: {len(df)} linhas agrupadas em {len(serie)} "
-            f"categorias de «{eixo_x}» ({agregacao})."
-        )
+        notas.append(t("n_agrupadas", titulo=grafico["titulo"], n=len(df),
+                       c=len(serie), x=eixo_x,
+                       agregacao=t("agr_" + agregacao)))
 
     # so em barras: numa linha, 64 pontos leem-se bem; 64 barras nao
     if grafico["tipo"] == "barras" and len(serie) > MAX_CATEGORIAS_LEGIVEIS:
@@ -1605,7 +1956,7 @@ def rotulo_do_eixo_y(grafico: dict) -> str:
     """
     if isinstance(grafico.get("serie"), list):
         return ""
-    return nome_legivel(grafico.get("eixo_y") or "Registos")
+    return nome_legivel(grafico.get("eixo_y") or t("registos"))
 
 # cores e tracos distinguiveis tambem a preto e branco e por quem nao distingue
 # vermelho de verde: a forma do traco identifica a serie, nao so a cor
@@ -1714,49 +2065,40 @@ def frase_descritiva(serie: pd.Series, grafico: dict, n_linhas: int) -> str:
     eixo_y = nome_legivel(grafico["eixo_y"]) if grafico.get("eixo_y") else None
 
     if grafico["tipo"] in TIPOS_SEM_AGREGACAO:
-        return (
-            f"Cada ponto é uma linha do ficheiro: «{eixo_x}» na horizontal e "
-            f"«{eixo_y}» na vertical, a partir de {formatar_numero(n_linhas)} "
-            "linhas. O gráfico mostra como as duas colunas se relacionam."
-        )
+        return t("descr_dispersao", x=eixo_x, y=eixo_y,
+                 n=formatar_numero(n_linhas))
 
     agregacao = grafico["agregacao"]
     if agregacao == "soma":
-        o_que = f"o total de «{eixo_y}»"
+        o_que = t("descr_o_que_soma", y=eixo_y)
     elif agregacao == "media":
-        o_que = f"a média de «{eixo_y}»"
+        o_que = t("descr_o_que_media", y=eixo_y)
     elif eixo_y is None:
-        o_que = "o número de registos"
+        o_que = t("descr_o_que_registos")
     else:
-        o_que = f"a contagem de «{eixo_y}»"
+        o_que = t("descr_o_que_contagem", y=eixo_y)
 
     maior_categoria = formatar_categoria(serie.idxmax())
     menor_categoria = formatar_categoria(serie.idxmin())
 
-    partes = [
-        f"O gráfico mostra {o_que} por «{eixo_x}», a partir de "
-        f"{formatar_numero(n_linhas)} linhas agrupadas em "
-        f"{formatar_numero(len(serie))} categorias."
-    ]
+    partes = [t("descr_mostra", o_que=o_que, x=eixo_x,
+                n=formatar_numero(n_linhas), c=formatar_numero(len(serie)))]
 
     if agregacao == "soma":
-        partes.append(f"O total é {formatar_numero(serie.sum())}.")
+        partes.append(t("descr_total", v=formatar_numero(serie.sum())))
     elif agregacao == "media":
-        partes.append(f"A média das categorias é {formatar_numero(serie.mean())}.")
+        partes.append(t("descr_media", v=formatar_numero(serie.mean())))
     else:
-        partes.append(f"O total de registos é {formatar_numero(serie.sum())}.")
+        partes.append(t("descr_total_registos", v=formatar_numero(serie.sum())))
 
-    partes.append(
-        f"O valor mais alto é {formatar_numero(serie.max())}, em «{maior_categoria}», "
-        f"e o mais baixo é {formatar_numero(serie.min())}, em «{menor_categoria}»."
-    )
+    partes.append(t("descr_extremos",
+                    alto=formatar_numero(serie.max()), cat_alto=maior_categoria,
+                    baixo=formatar_numero(serie.min()), cat_baixo=menor_categoria))
 
     if grafico["tipo"] == "circular" and serie.sum() > 0:
         fatia = round(float(serie.max()) / float(serie.sum()) * 100, 1)
-        partes.append(
-            f"A maior fatia, «{maior_categoria}», representa "
-            f"{formatar_numero(fatia)}% do total."
-        )
+        partes.append(t("descr_fatia", cat=maior_categoria,
+                        p=formatar_numero(fatia)))
 
     return " ".join(partes)
 
@@ -1924,8 +2266,7 @@ def proximos_rotulos(indice, quantos: int) -> list[str]:
 
     numero = numero_do_mes(ultimo)
     if numero is not None and normalizar(ultimo) in MESES_PT:
-        nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho",
-                 "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        nomes = nomes_dos_meses()
         return [nomes[(numero - 1 + i + 1) % 12] for i in range(quantos)]
 
     return [f"período +{i + 1}" for i in range(quantos)]
@@ -1955,11 +2296,10 @@ def prever(serie: pd.Series, horizonte: int) -> dict | None:
 
     if sazonal is None:
         base = valores
-        metodo = "tendência linear sobre a série observada"
+        metodo = t("p_metodo_simples")
     else:
         base = [v / f for v, f in zip(valores, fatores)]
-        metodo = ("tendência linear sobre a série dessazonalizada, com o fator "
-                  "sazonal reaplicado a cada período previsto")
+        metodo = t("p_metodo_saz")
 
     reta = regressao_linear(base)
     if reta is None or reta["r2"] < R2_MINIMO_PREVISAO:
@@ -1967,14 +2307,14 @@ def prever(serie: pd.Series, horizonte: int) -> dict | None:
 
     n = reta["n"]
     graus = n - 2
-    t = valor_t(graus)
+    t_student = valor_t(graus)
     rotulos = proximos_rotulos(serie.index, horizonte)
 
     previsoes = []
     for passo in range(horizonte):
         x = n + passo
         centro = reta["intercecao"] + reta["declive"] * x
-        margem = t * reta["erro_padrao"] * math.sqrt(
+        margem = t_student * reta["erro_padrao"] * math.sqrt(
             1 + 1 / n + (x - reta["media_x"]) ** 2 / reta["soma_xx"]
         )
         inferior, superior = centro - margem, centro + margem
@@ -2015,11 +2355,27 @@ def classificar(valor: float, baixo: float, alto: float,
     return termos[2]
 
 
+def nomes_dos_meses() -> list[str]:
+    if em_ingles():
+        return ["January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December"]
+    return ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho",
+            "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+
+def termos_baixa_elevada() -> tuple[str, str, str]:
+    return t("t_baixa"), t("t_moderada"), t("t_elevada")
+
+
+def termos_fraco_forte() -> tuple[str, str, str]:
+    return t("t_fraco"), t("t_moderado"), t("t_forte")
+
+
 def criterio(baixo: float, alto: float, termos: tuple[str, str, str],
              sufixo: str = "%") -> str:
-    return (f"critério: <{formatar_numero(baixo)}{sufixo} {termos[0]}, "
-            f"{formatar_numero(baixo)}–{formatar_numero(alto)}{sufixo} {termos[1]}, "
-            f">{formatar_numero(alto)}{sufixo} {termos[2]}")
+    return t("criterio", baixo=formatar_numero(baixo),
+             alto=formatar_numero(alto), s=sufixo,
+             a=termos[0], b=termos[1], c=termos[2])
 
 
 # ------------------------------------------------------------ eixo temporal
@@ -2185,7 +2541,7 @@ def secao_meta_por_serie(series: dict, grafico: dict) -> tuple[str, str]:
             f"({formatar_com_precisao(alvo - v)} abaixo)" for n, v in falharam
         )
         texto += f" Abaixo da meta: {lista}."
-    return ("Meta", texto)
+    return (t("b_meta"), texto)
 
 
 def correlacao(xs: list[float], ys: list[float]) -> float | None:
@@ -2214,35 +2570,29 @@ def analise_dispersao(serie: pd.Series, grafico: dict) -> list[tuple[str, str]]:
     eixo_x = nome_legivel(grafico["eixo_x"])
     eixo_y = nome_legivel(grafico["eixo_y"])
 
-    blocos = [("Âmbito", (
-        f"{formatar_numero(len(ys))} pontos, um por linha do ficheiro. "
-        f"«{eixo_x}» vai de {formatar_com_precisao(min(xs))} a "
-        f"{formatar_com_precisao(max(xs))}; «{eixo_y}» vai de "
-        f"{formatar_com_precisao(min(ys))} a {formatar_com_precisao(max(ys))}."
+    blocos = [(t("b_ambito"), (
+        t("d_ambito", n=formatar_numero(len(ys)), x=eixo_x,
+          x_min=formatar_com_precisao(min(xs)), x_max=formatar_com_precisao(max(xs)),
+          y=eixo_y, y_min=formatar_com_precisao(min(ys)),
+          y_max=formatar_com_precisao(max(ys)))
     ))]
 
     r = correlacao(xs, ys)
     if r is None:
-        blocos.append(("Relação", (
-            "Não calculada — uma das colunas tem sempre o mesmo valor, e sem "
-            "variação não há relação que medir."
+        blocos.append((t("b_relacao"), (
+            t("d_sem_variacao")
         )))
         return blocos
 
-    termos = ("fraca", "moderada", "forte")
+    termos = (t("t_fraca"), t("t_moderada"), t("t_forte_f"))
     forca = classificar(abs(r), R_CORRELACAO_FRACA, R_CORRELACAO_FORTE, termos)
-    sentido = ("positiva: sobem juntas" if r > 0
-               else "negativa: quando uma sobe, a outra desce")
-    blocos.append(("Relação", (
-        f"Coeficiente de correlação de Pearson de {formatar_numero(round(r, 2))} "
-        f"— correlação {forca} e {sentido} "
-        f"({criterio(R_CORRELACAO_FRACA, R_CORRELACAO_FORTE, termos, sufixo='')}, "
-        "em valor absoluto)."
+    sentido = t("d_positiva") if r > 0 else t("d_negativa")
+    blocos.append((t("b_relacao"), (
+        t("d_relacao", r=formatar_numero(round(r, 2)), forca=forca, sentido=sentido,
+          crit=criterio(R_CORRELACAO_FRACA, R_CORRELACAO_FORTE, termos, sufixo=""))
     )))
-    blocos.append(("O que isto não diz", (
-        "Correlação não é causa. Duas colunas subirem juntas não significa que "
-        "uma faça a outra subir: pode haver um terceiro fator, ou ser "
-        "coincidência. Este relatório mede a relação; não a explica."
+    blocos.append((t("b_nao_diz"), (
+        t("d_nao_causa")
     )))
     return blocos
 
@@ -2264,72 +2614,69 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
     total = sum(valores)
     media = total / len(valores)
 
-    blocos.append(("Âmbito", (
-        f"{formatar_numero(len(serie))} categorias de «{nome_legivel(grafico['eixo_x'])}», "
-        f"a partir de {formatar_numero(n_linhas)} linhas. "
-        f"Total {formatar_numero(total)}; média {formatar_numero(media)}; "
-        f"mediana {formatar_numero(float(serie.median()))}."
-    )))
+    blocos.append((t("b_ambito"), t(
+        "a_ambito", c=formatar_numero(len(serie)),
+        x=nome_legivel(grafico["eixo_x"]), n=formatar_numero(n_linhas),
+        total=formatar_numero(total), media=formatar_numero(media),
+        mediana=formatar_numero(float(serie.median())))))
 
     # o ambito «serie» e tratado uma vez so, ao nivel do grafico
     if grafico.get("meta") and grafico["meta"].get("ambito", "total") != "serie":
         blocos.append(secao_meta(serie, grafico))
 
-    blocos.append(("Amplitude", (
-        f"Máximo {formatar_numero(serie.max())} em «{formatar_categoria(serie.idxmax())}»; "
-        f"mínimo {formatar_numero(serie.min())} em «{formatar_categoria(serie.idxmin())}». "
-        f"Amplitude {formatar_numero(float(serie.max()) - float(serie.min()))}"
-        + (f"; rácio de {formatar_numero(round(float(serie.max()) / float(serie.min()), 2))}."
-           if float(serie.min()) > 0 else " (o mínimo é zero ou negativo, logo sem rácio).")
-    )))
+    amplitude = t("a_amplitude",
+                  alto=formatar_numero(serie.max()),
+                  cat_alto=formatar_categoria(serie.idxmax()),
+                  baixo=formatar_numero(serie.min()),
+                  cat_baixo=formatar_categoria(serie.idxmin()),
+                  amp=formatar_numero(float(serie.max()) - float(serie.min())))
+    if float(serie.min()) > 0:
+        amplitude += t("a_racio", r=formatar_numero(
+            round(float(serie.max()) / float(serie.min()), 2)))
+    else:
+        amplitude += t("a_sem_racio")
+    blocos.append((t("b_amplitude"), amplitude))
 
     if len(serie) > 1 and media != 0:
         desvio = float(serie.std(ddof=1))
         cv = abs(desvio / media) * 100
-        termos = ("baixa", "moderada", "elevada")
-        blocos.append(("Dispersão", (
-            f"Desvio-padrão {formatar_numero(desvio)}; coeficiente de variação "
-            f"{formatar_numero(round(cv, 1))}% — dispersão "
-            f"{classificar(cv, CV_DISPERSAO_BAIXA, CV_DISPERSAO_ELEVADA, termos)} "
-            f"({criterio(CV_DISPERSAO_BAIXA, CV_DISPERSAO_ELEVADA, termos)})."
-        )))
+        termos = termos_baixa_elevada()
+        blocos.append((t("b_dispersao"), t(
+            "a_dispersao", dp=formatar_numero(desvio),
+            cv=formatar_numero(round(cv, 1)),
+            termo=classificar(cv, CV_DISPERSAO_BAIXA, CV_DISPERSAO_ELEVADA, termos),
+            crit=criterio(CV_DISPERSAO_BAIXA, CV_DISPERSAO_ELEVADA, termos))))
 
     if total > 0 and all(v >= 0 for v in valores):
         ordenados = sorted(valores, reverse=True)
         peso_maior = ordenados[0] / total * 100
-        termos = ("baixa", "moderada", "elevada")
-        texto = (
-            f"A maior categoria representa {formatar_numero(round(peso_maior, 1))}% do "
-            f"total — concentração "
-            f"{classificar(peso_maior, PESO_CONCENTRACAO_BAIXA, PESO_CONCENTRACAO_ELEVADA, termos)} "
-            f"({criterio(PESO_CONCENTRACAO_BAIXA, PESO_CONCENTRACAO_ELEVADA, termos)})."
-        )
+        termos = termos_baixa_elevada()
+        texto = t("a_concentracao",
+                  p=formatar_numero(round(peso_maior, 1)),
+                  termo=classificar(peso_maior, PESO_CONCENTRACAO_BAIXA,
+                                    PESO_CONCENTRACAO_ELEVADA, termos),
+                  crit=criterio(PESO_CONCENTRACAO_BAIXA,
+                                PESO_CONCENTRACAO_ELEVADA, termos))
         if len(serie) > 3:
             peso_tres = sum(ordenados[:3]) / total * 100
-            texto += f" As três maiores valem {formatar_numero(round(peso_tres, 1))}%."
-        blocos.append(("Concentração", texto))
+            texto += t("a_tres_maiores", p=formatar_numero(round(peso_tres, 1)))
+        blocos.append((t("b_concentracao"), texto))
 
     atipicos = detetar_atipicos(serie)
     if atipicos is None:
-        blocos.append(("Valores atípicos", (
-            f"Não avaliados — o método de Tukey (1,5×IQR) precisa de pelo menos "
-            f"{MIN_CATEGORIAS_ATIPICOS} categorias e há {formatar_numero(len(serie))}."
-        )))
+        blocos.append((t("b_atipicos"), t(
+            "a_atipicos_nao", min=MIN_CATEGORIAS_ATIPICOS,
+            n=formatar_numero(len(serie)))))
     elif atipicos:
         lista = "; ".join(
             f"«{formatar_categoria(c)}» ({formatar_numero(v)})" for c, v in atipicos
         )
-        quantos = ("1 valor" if len(atipicos) == 1
-                   else f"{formatar_numero(len(atipicos))} valores")
-        blocos.append(("Valores atípicos", (
-            f"{quantos} fora do intervalo interquartil alargado "
-            f"(método de Tukey, 1,5×IQR): {lista}."
-        )))
+        quantos = (t("a_um_valor") if len(atipicos) == 1
+                   else t("a_n_valores", n=formatar_numero(len(atipicos))))
+        blocos.append((t("b_atipicos"),
+                       t("a_atipicos_ha", quantos=quantos, lista=lista)))
     else:
-        blocos.append(("Valores atípicos", (
-            "Nenhuma categoria fora do intervalo interquartil alargado "
-            "(método de Tukey, 1,5×IQR)."
-        )))
+        blocos.append((t("b_atipicos"), t("a_atipicos_nenhum")))
 
     pedido = grafico.get("previsao")
 
@@ -2338,16 +2685,10 @@ def montar_analise(serie: pd.Series, grafico: dict, n_linhas: int,
         if pedido:
             blocos.append(secao_previsao(serie, pedido))
     else:
-        blocos.append(("Evolução", (
-            f"Não analisada — «{nome_legivel(grafico['eixo_x'])}» é um eixo categórico, não uma "
-            "linha do tempo. Tendências e regressões só têm significado quando a "
-            "ordem das categorias é a ordem do tempo."
-        )))
+        eixo = nome_legivel(grafico["eixo_x"])
+        blocos.append((t("b_evolucao"), t("a_categorico", x=eixo)))
         if pedido:
-            blocos.append(("Previsão", (
-                f"Não calculada — «{nome_legivel(grafico['eixo_x'])}» é um eixo categórico. Prever o "
-                "período seguinte só faz sentido quando existe um período seguinte."
-            )))
+            blocos.append((t("b_previsao"), t("p_categorico", x=eixo)))
 
     if serie_anual is not None and len(serie_anual) >= 2:
         blocos.extend(analise_anual(serie_anual))
@@ -2370,13 +2711,11 @@ def secao_comparacao_series(series: dict, grafico: dict,
         peso = f", {formatar_numero(round(valor / total * 100, 1))}%" if total > 0 else ""
         partes.append(f"«{nome}» {formatar_com_precisao(valor)}{peso}")
 
-    o_que = "média" if agregacao == "media" else "total"
-    origem = ("uma por coluna" if isinstance(grafico["serie"], list)
-              else f"de «{nome_legivel(grafico['serie'])}»")
-    texto = (
-        f"{formatar_numero(len(series))} séries, {origem}. "
-        f"Por {o_que}: " + "; ".join(partes) + "."
-    )
+    o_que = t("s_media") if agregacao == "media" else t("s_total")
+    origem = (t("s_uma_por_coluna") if isinstance(grafico["serie"], list)
+              else t("s_de", coluna=nome_legivel(grafico["serie"])))
+    texto = t("s_comparacao", n=formatar_numero(len(series)), origem=origem,
+              o_que=o_que, partes="; ".join(partes))
 
     if temporal:
         crescimentos = {}
@@ -2387,37 +2726,35 @@ def secao_comparacao_series(series: dict, grafico: dict,
         if crescimentos:
             maior = max(crescimentos, key=crescimentos.get)
             menor = min(crescimentos, key=crescimentos.get)
-            texto += (
-                f" Do primeiro ao último período, «{maior}» variou "
+            texto += t("s_crescimento", maior=maior, v_maior=(
                 f"{'+' if crescimentos[maior] >= 0 else ''}"
-                f"{formatar_numero(round(crescimentos[maior], 1))}%"
-            )
+                f"{formatar_numero(round(crescimentos[maior], 1))}"))
             if menor != maior:
-                texto += (
-                    f" e «{menor}» {'+' if crescimentos[menor] >= 0 else ''}"
-                    f"{formatar_numero(round(crescimentos[menor], 1))}%"
-                )
-            texto += "."
+                texto += t("s_e_menor", menor=menor, v_menor=(
+                    f"{'+' if crescimentos[menor] >= 0 else ''}"
+                    f"{formatar_numero(round(crescimentos[menor], 1))}"))
+            else:
+                texto += "."
 
-    blocos = [("Comparação entre séries", texto)]
+    blocos = [(t("b_comparacao_series"), texto)]
 
     linhas = []
     for nome, s in series.items():
-        parte = (
-            f"«{nome}»: máximo {formatar_com_precisao(s.max())} em "
-            f"«{formatar_categoria(s.idxmax())}», mínimo "
-            f"{formatar_com_precisao(s.min())} em «{formatar_categoria(s.idxmin())}»"
-        )
+        parte = t("s_por_serie", nome=nome,
+                  alto=formatar_com_precisao(s.max()),
+                  cat_alto=formatar_categoria(s.idxmax()),
+                  baixo=formatar_com_precisao(s.min()),
+                  cat_baixo=formatar_categoria(s.idxmin()))
         if temporal and len(s) >= MIN_PERIODOS_REGRESSAO:
             reta = regressao_linear([float(v) for v in s.values])
             if reta and reta["r2"] >= R2_AJUSTE_FRACO:
-                parte += (", tendência crescente" if reta["declive"] > 0
-                          else ", tendência decrescente")
+                parte += (t("s_tend_cresc") if reta["declive"] > 0
+                          else t("s_tend_decresc"))
             elif reta:
-                parte += ", tendência indefinida"
+                parte += t("s_tend_indef")
         linhas.append(parte + ".")
 
-    blocos.append(("Por série", " ".join(linhas)))
+    blocos.append((t("b_por_serie"), " ".join(linhas)))
     return blocos
 
 
@@ -2436,135 +2773,108 @@ def secao_meta(serie: pd.Series, grafico: dict) -> tuple[str, str]:
     if ambito == "total":
         if agregacao == "media":
             observado = float(serie.mean())
-            o_que = "A média das categorias"
+            o_que = t("m_media")
         else:
             observado = float(serie.sum())
-            o_que = "O total"
+            o_que = t("m_total")
 
         if alvo == 0:
-            return ("Meta", (
+            return (t("b_meta"), (
                 f"{o_que} é {formatar_com_precisao(observado)}, face a uma meta de "
                 "zero. Sem meta positiva não há percentagem a calcular."
             ))
 
         percentagem = observado / alvo * 100
         diferenca = observado - alvo
-        posicao = ("acima da meta" if diferenca > 0
-                   else "abaixo da meta" if diferenca < 0 else "exatamente na meta")
-        texto = (
-            f"Meta definida: {formatar_com_precisao(alvo)}. "
-            f"{o_que} é {formatar_com_precisao(observado)} — "
-            f"{formatar_numero(round(percentagem, 1))}% da meta, "
-            f"{formatar_com_precisao(abs(diferenca))} {posicao}."
-        )
-        return ("Meta", texto)
+        posicao = (t("m_acima") if diferenca > 0
+                   else t("m_abaixo") if diferenca < 0 else t("m_exata"))
+        return (t("b_meta"), t(
+            "m_texto", alvo=formatar_com_precisao(alvo), o_que=o_que,
+            obs=formatar_com_precisao(observado),
+            p=formatar_numero(round(percentagem, 1)),
+            dif=formatar_com_precisao(abs(diferenca)), posicao=posicao))
 
     # ambito == "categoria"
     valores = [float(v) for v in serie.values]
     atingiram = [c for c, v in serie.items() if float(v) >= alvo]
     falharam = [(c, float(v)) for c, v in serie.items() if float(v) < alvo]
 
-    texto = (
-        f"Meta definida: {formatar_com_precisao(alvo)} por categoria. "
-        f"{formatar_numero(len(atingiram))} de {formatar_numero(len(serie))} "
-        f"categorias atingiram-na "
-        f"({formatar_numero(round(len(atingiram) / len(serie) * 100, 1))}%)."
-    )
+    texto = t("m_por_categoria", alvo=formatar_com_precisao(alvo),
+              n=formatar_numero(len(atingiram)), total=formatar_numero(len(serie)),
+              p=formatar_numero(round(len(atingiram) / len(serie) * 100, 1)))
 
     if falharam:
         piores = sorted(falharam, key=lambda par: par[1])[:3]
         lista = "; ".join(
-            f"«{formatar_categoria(c)}» com {formatar_com_precisao(v)} "
-            f"({formatar_com_precisao(alvo - v)} abaixo)"
+            t("m_abaixo_de", cat=formatar_categoria(c),
+              v=formatar_com_precisao(v), falta=formatar_com_precisao(alvo - v))
             for c, v in piores
         )
-        texto += f" Mais distantes da meta: {lista}."
+        texto += t("m_mais_distantes", lista=lista)
         em_falta = sum(alvo - v for _, v in falharam)
-        texto += (
-            f" Somando o que faltou a cada uma, o défice total é "
-            f"{formatar_com_precisao(em_falta)}."
-        )
+        texto += t("m_defice", v=formatar_com_precisao(em_falta))
     else:
-        texto += " Nenhuma categoria ficou abaixo."
+        texto += t("m_nenhuma_abaixo")
 
-    media = sum(valores) / len(valores)
-    texto += (
-        f" A média por categoria é {formatar_com_precisao(media)}, "
-        f"{formatar_numero(round(media / alvo * 100, 1))}% da meta."
-        if alvo != 0 else ""
-    )
-    return ("Meta", texto)
+    if alvo != 0:
+        media = sum(valores) / len(valores)
+        texto += t("m_media_categoria", media=formatar_com_precisao(media),
+                   p=formatar_numero(round(media / alvo * 100, 1)))
+    return (t("b_meta"), texto)
 
 
 def secao_previsao(serie: pd.Series, pedido: int) -> tuple[str, str]:
     """Constroi a seccao Previsao, ou a explicacao de porque nao a ha."""
     n = len(serie)
     if n < MIN_PERIODOS_PREVISAO:
-        return ("Previsão", (
-            f"Não calculada — são precisos pelo menos {MIN_PERIODOS_PREVISAO} "
-            f"períodos observados e há {formatar_numero(n)}."
+        return (t("b_previsao"), (
+            t("p_curta", min=MIN_PERIODOS_PREVISAO, n=formatar_numero(n))
         ))
 
     maximo = horizonte_permitido(n)
     horizonte = min(pedido, maximo)
     aviso_horizonte = ""
     if pedido > maximo:
-        aviso_horizonte = (
-            f" Pediste {formatar_numero(pedido)} períodos, mas o máximo defensável "
-            f"para uma série de {formatar_numero(n)} é {formatar_numero(maximo)} "
-            f"(um terço da série, no máximo {MAX_HORIZONTE_PREVISAO}); "
-            "extrapolar mais longe seria ficção."
-        )
+        aviso_horizonte = t("p_horizonte", pedido=formatar_numero(pedido),
+                            n=formatar_numero(n), max=formatar_numero(maximo),
+                            teto=MAX_HORIZONTE_PREVISAO)
 
     resultado = prever(serie, horizonte)
     if resultado is None:
-        return ("Previsão", f"Não calculada — série demasiado curta.{aviso_horizonte}")
+        return (t("b_previsao"),
+                t("p_curta", min=MIN_PERIODOS_PREVISAO, n=formatar_numero(n))
+                + aviso_horizonte)
 
     if "recusa" in resultado:
         r2 = resultado["r2"]
-        detalhe = (f"o ajuste da tendência é fraco (R² de {formatar_numero(round(r2, 2))}, "
-                   f"mínimo {formatar_numero(R2_MINIMO_PREVISAO)})"
-                   if r2 is not None else "não foi possível ajustar uma tendência")
-        return ("Previsão", (
-            f"Não calculada — {detalhe}. Extrapolar uma reta que não descreve os "
-            "dados dava um número com ar de rigor e sem rigor nenhum."
-        ))
+        detalhe = (t("p_ajuste_fraco", r2=formatar_numero(round(r2, 2)),
+                     min=formatar_numero(R2_MINIMO_PREVISAO))
+                   if r2 is not None else t("p_sem_reta"))
+        return (t("b_previsao"), t("p_ajuste", detalhe=detalhe))
 
     linhas = "; ".join(
-        f"{p['rotulo']} entre {formatar_com_precisao(p['inferior'])} e "
-        f"{formatar_com_precisao(p['superior'])}"
+        t("p_entre", rotulo=p["rotulo"],
+          inf=formatar_com_precisao(p["inferior"]),
+          sup=formatar_com_precisao(p["superior"]))
         for p in resultado["previsoes"]
     )
 
-    texto = (
-        f"Método: {resultado['metodo']}, ajustada a "
-        f"{formatar_numero(resultado['n'])} períodos (R² de "
-        f"{formatar_numero(round(resultado['r2'], 2))}). "
-        f"Intervalos a {CONFIANCA_PREVISAO}% — {linhas}."
-        f"{aviso_horizonte}"
-    )
+    texto = t("p_texto", metodo=resultado["metodo"],
+              n=formatar_numero(resultado["n"]),
+              r2=formatar_numero(round(resultado["r2"], 2)),
+              conf=CONFIANCA_PREVISAO, linhas=linhas) + aviso_horizonte
 
     negativas = [p for p in resultado["previsoes"] if p["centro"] < 0]
     if negativas and all(v >= 0 for v in serie.values):
-        texto += (
-            f" Atenção: {formatar_numero(len(negativas))} período(s) previstos descem "
-            "abaixo de zero, apesar de nenhum valor observado ser negativo — sinal de "
-            "que a reta deixou de ser adequada neste horizonte."
-        )
+        texto += t("p_negativos", n=formatar_numero(len(negativas)))
 
     largos = [p for p in resultado["previsoes"]
               if abs(p["centro"]) > 0 and (p["superior"] - p["inferior"]) > abs(p["centro"])]
     if largos:
-        texto += (
-            f" Em {formatar_numero(len(largos))} período(s) o intervalo é mais largo do "
-            "que o próprio valor previsto: a incerteza é da ordem de grandeza da previsão."
-        )
+        texto += t("p_largos", n=formatar_numero(len(largos)))
 
-    texto += (
-        " Pressupõe que a tendência e a sazonalidade observadas se mantêm. Não incorpora "
-        "nada que não esteja no ficheiro."
-    )
-    return ("Previsão", texto)
+    texto += t("p_pressupoe")
+    return (t("b_previsao"), texto)
 
 
 def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, str]]:
@@ -2572,116 +2882,100 @@ def analise_temporal(serie: pd.Series, valores: list[float]) -> list[tuple[str, 
     blocos = []
     primeiro, ultimo = valores[0], valores[-1]
     variacao = ultimo - primeiro
-    texto = (
-        f"Do primeiro ao último período: {'+' if variacao >= 0 else ''}"
-        f"{formatar_numero(variacao)}"
-    )
+    var = f"{'+' if variacao >= 0 else ''}{formatar_numero(variacao)}"
     if primeiro != 0:
-        texto += f" ({'+' if variacao >= 0 else ''}{formatar_numero(round(variacao / abs(primeiro) * 100, 1))}%)"
-    texto += "."
+        var += (f" ({'+' if variacao >= 0 else ''}"
+                f"{formatar_numero(round(variacao / abs(primeiro) * 100, 1))}%)")
+    texto = t("a_evolucao", var=var) + "."
 
     diferencas = [b - a for a, b in zip(valores, valores[1:])]
     subidas = sum(1 for d in diferencas if d > 0)
     descidas = sum(1 for d in diferencas if d < 0)
-    texto += (
-        f" Das {formatar_numero(len(diferencas))} variações período a período, "
-        f"{formatar_numero(subidas)} positivas e {formatar_numero(descidas)} negativas"
-    )
+    texto += t("a_variacoes", n=formatar_numero(len(diferencas)),
+               mais=formatar_numero(subidas), menos=formatar_numero(descidas))
     # os zeros contam: uma serie com subidas e patamares, sem descidas, e
     # monotona nao decrescente. Chamar-lhe «nao monotona» era errado.
     if not diferencas:
         pass
     elif descidas == 0 and subidas:
-        texto += (" — série monótona crescente." if subidas == len(diferencas)
-                  else " — série monótona não decrescente (há períodos iguais).")
+        texto += (t("a_monotona_cresc") if subidas == len(diferencas)
+                  else t("a_monotona_nao_dec"))
     elif subidas == 0 and descidas:
-        texto += (" — série monótona decrescente." if descidas == len(diferencas)
-                  else " — série monótona não crescente (há períodos iguais).")
+        texto += (t("a_monotona_dec") if descidas == len(diferencas)
+                  else t("a_monotona_nao_cresc"))
     else:
-        texto += " — série não monótona."
+        texto += t("a_nao_monotona")
 
     if diferencas:
         maior = max(range(len(diferencas)), key=lambda i: diferencas[i])
         menor = min(range(len(diferencas)), key=lambda i: diferencas[i])
         rotulos = [formatar_categoria(c) for c in serie.index]
-        texto += (
-            f" Maior subida: «{rotulos[maior]}» → «{rotulos[maior + 1]}», "
-            f"+{formatar_numero(diferencas[maior])}."
-            f" Maior descida: «{rotulos[menor]}» → «{rotulos[menor + 1]}», "
-            f"{formatar_numero(diferencas[menor])}."
-        )
-    blocos.append(("Evolução", texto))
+        texto += t("a_maior_subida",
+                   de=rotulos[maior], para=rotulos[maior + 1],
+                   v=formatar_numero(diferencas[maior]),
+                   de2=rotulos[menor], para2=rotulos[menor + 1],
+                   v2=formatar_numero(diferencas[menor]))
+    blocos.append((t("b_evolucao"), texto))
 
     resultado = regressao_linear(valores)
     if resultado is None:
-        blocos.append(("Tendência", (
-            f"Regressão não calculada — são precisos pelo menos "
-            f"{MIN_PERIODOS_REGRESSAO} períodos e há {formatar_numero(len(valores))}."
-        )))
+        blocos.append((t("b_tendencia"), t(
+            "a_regressao_nao", min=MIN_PERIODOS_REGRESSAO,
+            n=formatar_numero(len(valores)))))
     else:
         declive, r2 = resultado["declive"], resultado["r2"]
-        termos = ("fraco", "moderado", "forte")
+        termos = termos_fraco_forte()
         ajuste = classificar(r2, R2_AJUSTE_FRACO, R2_AJUSTE_FORTE, termos)
         if r2 < R2_AJUSTE_FRACO:
-            leitura = "tendência indefinida: os dados não se aproximam de uma reta"
+            leitura = t("l_indefinida")
         elif declive > 0:
-            leitura = "tendência crescente"
+            leitura = t("l_crescente")
         elif declive < 0:
-            leitura = "tendência decrescente"
+            leitura = t("l_decrescente")
         else:
-            leitura = "tendência estável"
-        blocos.append(("Tendência", (
-            f"Regressão linear com declive de {'+' if declive >= 0 else ''}"
-            f"{formatar_com_precisao(declive)} por período e R² de "
-            f"{formatar_numero(round(r2, 3))} — ajuste {ajuste} "
-            f"({criterio(R2_AJUSTE_FRACO, R2_AJUSTE_FORTE, termos, sufixo='')}). "
-            f"Leitura: {leitura}."
-        )))
+            leitura = t("l_estavel")
+        blocos.append((t("b_tendencia"), t(
+            "a_regressao",
+            declive=f"{'+' if declive >= 0 else ''}{formatar_com_precisao(declive)}",
+            r2=formatar_numero(round(r2, 3)), ajuste=ajuste,
+            crit=criterio(R2_AJUSTE_FRACO, R2_AJUSTE_FORTE, termos, sufixo=""),
+            leitura=leitura)))
 
     taxa = crescimento_medio(valores)
     if taxa is None:
         if len(valores) < MIN_PERIODOS_CRESCIMENTO:
-            razao = (f"são precisos pelo menos {MIN_PERIODOS_CRESCIMENTO} períodos e "
-                     f"há {formatar_numero(len(valores))}")
+            razao = t("a_cresc_poucos", min=MIN_PERIODOS_CRESCIMENTO,
+                      n=formatar_numero(len(valores)))
         else:
-            razao = "a série tem valores nulos ou negativos, e a taxa geométrica não existe"
-        blocos.append(("Crescimento médio", f"Não calculado — {razao}."))
+            razao = t("a_cresc_zeros")
+        blocos.append((t("b_crescimento"), t("a_cresc_nao", razao=razao)))
     else:
-        blocos.append(("Crescimento médio", (
-            f"Taxa de crescimento média geométrica de {'+' if taxa >= 0 else ''}"
-            f"{formatar_numero(round(taxa, 1))}% por período."
-        )))
+        blocos.append((t("b_crescimento"), t(
+            "a_crescimento",
+            taxa=f"{'+' if taxa >= 0 else ''}{formatar_numero(round(taxa, 1))}")))
 
     sazonal = indice_sazonal(serie)
     if sazonal is not None and "impossivel" in sazonal:
-        blocos.append(("Sazonalidade", (
-            "Não avaliada — o índice sazonal é uma razão entre a média de cada mês "
-            "e a média geral, e só tem significado quando todos os valores são "
-            "positivos. Esta série tem valores nulos ou negativos, e o índice daria "
-            "um número sem sentido."
+        blocos.append((t("b_sazonalidade"), (
+            t("a_saz_negativos")
         )))
     elif sazonal is None:
-        blocos.append(("Sazonalidade", (
-            f"Não avaliada — o índice sazonal precisa de pelo menos "
-            f"{MIN_CICLOS_SAZONALIDADE} ciclos anuais completos de dados mensais, "
-            "e não foi possível identificá-los nesta série."
+        blocos.append((t("b_sazonalidade"), (
+            t("a_saz_nao", min=MIN_CICLOS_SAZONALIDADE)
         )))
     else:
-        nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho",
-                 "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        nomes = nomes_dos_meses()
         indices = sazonal["indices"]
         mais_forte = max(indices, key=indices.get)
         mais_fraco = min(indices, key=indices.get)
-        blocos.append(("Sazonalidade", (
-            f"Índice sazonal sobre {formatar_numero(sazonal['ciclos'])} ciclos anuais "
-            f"(média de cada mês a dividir pela média geral). "
-            f"Mês mais forte: {nomes[mais_forte - 1]}, índice "
-            f"{formatar_numero(round(indices[mais_forte], 2))} — "
-            f"{formatar_numero(round((indices[mais_forte] - 1) * 100, 1))}% acima do mês "
-            f"típico. Mês mais fraco: {nomes[mais_fraco - 1]}, índice "
-            f"{formatar_numero(round(indices[mais_fraco], 2))} — "
-            f"{formatar_numero(round((1 - indices[mais_fraco]) * 100, 1))}% abaixo."
-        )))
+        blocos.append((t("b_sazonalidade"), t(
+            "a_saz", ciclos=formatar_numero(sazonal["ciclos"]),
+            forte=nomes[mais_forte - 1],
+            i_forte=formatar_numero(round(indices[mais_forte], 2)),
+            p_forte=formatar_numero(round((indices[mais_forte] - 1) * 100, 1)),
+            fraco=nomes[mais_fraco - 1],
+            i_fraco=formatar_numero(round(indices[mais_fraco], 2)),
+            p_fraco=formatar_numero(round((1 - indices[mais_fraco]) * 100, 1)))))
     return blocos
 
 
@@ -2693,7 +2987,7 @@ def analise_anual(serie_anual: pd.Series) -> list[tuple[str, str]]:
     partes = [
         f"{ano}: {formatar_numero(valor)}" for ano, valor in zip(anos, valores)
     ]
-    blocos = [("Ano a ano", "Totais por ano — " + "; ".join(partes) + ".")]
+    blocos = [(t("b_ano_a_ano"), t("a_ano_a_ano", partes="; ".join(partes)))]
 
     variacoes = []
     for anterior, seguinte, valor_a, valor_s in zip(anos, anos[1:], valores, valores[1:]):
@@ -2705,21 +2999,21 @@ def analise_anual(serie_anual: pd.Series) -> list[tuple[str, str]]:
 
     positivas = sum(1 for a, b in zip(valores, valores[1:]) if b > a)
     acumulada = valores[-1] - valores[0]
-    resumo = (
-        "Variação interanual — " + "; ".join(variacoes) + ". "
-        f"{formatar_numero(positivas)} de {formatar_numero(len(valores) - 1)} "
-        "variações foram positivas. "
-        f"Do primeiro ao último ano: {'+' if acumulada >= 0 else ''}"
-        f"{formatar_numero(acumulada)}"
-    )
+    texto_acumulada = f"{'+' if acumulada >= 0 else ''}{formatar_numero(acumulada)}"
     if valores[0] != 0:
-        resumo += f" ({'+' if acumulada >= 0 else ''}{formatar_numero(round(acumulada / abs(valores[0]) * 100, 1))}%)"
-    resumo += (
-        f". Ano mais alto: {serie_anual.idxmax()} "
-        f"({formatar_numero(serie_anual.max())}); mais baixo: {serie_anual.idxmin()} "
-        f"({formatar_numero(serie_anual.min())})."
-    )
-    blocos.append(("Comparação entre anos", resumo))
+        texto_acumulada += (
+            f" ({'+' if acumulada >= 0 else ''}"
+            f"{formatar_numero(round(acumulada / abs(valores[0]) * 100, 1))}%)")
+    resumo = t("a_comparacao_anos", variacoes="; ".join(variacoes),
+               pos=formatar_numero(positivas),
+               total=formatar_numero(len(valores) - 1),
+               acumulada=texto_acumulada)
+    resumo += t("a_anos_extremos",
+                alto=serie_anual.idxmax(),
+                v_alto=formatar_numero(serie_anual.max()),
+                baixo=serie_anual.idxmin(),
+                v_baixo=formatar_numero(serie_anual.min()))
+    blocos.append((t("b_comparacao_anos"), resumo))
     return blocos
 
 
@@ -2758,7 +3052,7 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
 
         profundidade = plano.get("analise", "completa")
         if profundidade in ("completa", "detalhada"):
-            documento.add_heading("Análise", level=2)
+            documento.add_heading(t("analise"), level=2)
             blocos = []
             if varias:
                 blocos.extend(secao_comparacao_series(
@@ -2774,7 +3068,7 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
 
             if varias and profundidade == "detalhada":
                 for nome, serie in series.items():
-                    documento.add_heading(f"Análise — {nome}", level=2)
+                    documento.add_heading(t("analise_de", nome=nome), level=2)
                     escrever_blocos(documento, montar_analise(
                         serie, grafico, len(serie), resultado["temporal"], None))
 
@@ -2782,18 +3076,18 @@ def montar_documento(plano: dict, resultados: list[dict], avisos: list[str],
             acrescentar_tabela(documento, conjunto, grafico, notas)
 
     documento.add_page_break()
-    documento.add_heading("Notas sobre os dados", level=1)
+    documento.add_heading(t("notas_dados"), level=1)
     if avisos:
         documento.add_paragraph(
-            f"Foram encontrados {len(avisos)} problema(s) nos dados de origem:"
+            t("com_problemas", n=len(avisos))
         )
         for linha in avisos:
             documento.add_paragraph(linha, style="List Bullet")
     else:
-        documento.add_paragraph("Não foram encontrados problemas nos dados de origem.")
+        documento.add_paragraph(t("sem_problemas"))
 
     if notas:
-        documento.add_paragraph("Como os dados foram agrupados:")
+        documento.add_paragraph(t("como_agrupados"))
         for linha in notas:
             documento.add_paragraph(linha, style="List Bullet")
 
@@ -2820,14 +3114,14 @@ def pagina_de_rosto(documento, plano: dict, origem: Path | None) -> None:
 
     data = documento.add_paragraph()
     data.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    hoje = datetime.date.today().strftime("%d/%m/%Y")
-    corrida = data.add_run(f"Relatório gerado em {hoje}")
+    hoje = datetime.date.today().strftime("%Y-%m-%d" if em_ingles() else "%d/%m/%Y")
+    corrida = data.add_run(t("gerado_em", data=hoje))
     corrida.font.size = Pt(11)
 
     if origem is not None:
         fonte = documento.add_paragraph()
         fonte.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        corrida = fonte.add_run(f"A partir de {origem.name}")
+        corrida = fonte.add_run(t("a_partir_de", ficheiro=origem.name))
         corrida.italic = True
         corrida.font.size = Pt(10)
 
@@ -2839,7 +3133,7 @@ def indice(documento, resultados: list[dict]) -> None:
     que aparece vazio ate alguem carregar em «atualizar». Uma lista simples
     esta sempre certa.
     """
-    documento.add_heading("Índice", level=1)
+    documento.add_heading(t("indice"), level=1)
     for posicao, resultado in enumerate(resultados, start=1):
         # numero OU marca, nunca os dois: «• 1. Titulo» le-se mal
         documento.add_paragraph(f"{posicao}.  {resultado['grafico']['titulo']}")
