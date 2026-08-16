@@ -11,8 +11,6 @@ plano, verifica os dados e gera o documento.
 > using numbers computed from the file itself. It refuses to generate the report
 > when it finds problems in the data, unless you explicitly accept them.
 
-![Primeira página do relatório de exemplo](exemplos/preview.png)
-
 ## O que faz, e o que não faz
 
 **Faz:**

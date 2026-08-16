@@ -45,7 +45,7 @@ pdftoppm -jpeg -r 100 r.pdf pagina
 ```
 SKILL.md  README.md  CLAUDE.md  LICENSE  requirements.txt  .gitignore
 scripts/gerar_relatorio.py
-exemplos/vendas_2023_2025.xlsx  plano.json  relatorio_exemplo.docx  preview.png
+exemplos/vendas_2023_2025.xlsx  plano.json  relatorio_exemplo.docx
 testes/test_gerar_relatorio.py
 ```
 
@@ -63,8 +63,7 @@ testes/test_gerar_relatorio.py
   só no `README.md`. O `SKILL.md` aponta para lá. Nunca a mesma tabela em dois
   ficheiros.
 - Se o formato do `plano.json` mudar, atualizar `exemplos/plano.json`, regenerar
-  `exemplos/relatorio_exemplo.docx` e `exemplos/preview.png`, e acrescentar um
-  teste.
+  `exemplos/relatorio_exemplo.docx`, e acrescentar um teste.
 - Mensagens de commit curtas e em português.
 
 ## 6. Nunca fazer
@@ -132,7 +131,6 @@ testes/test_gerar_relatorio.py
   16/08/2026; antes estava fora de âmbito). A capa não é numerada. O índice é
   uma lista simples, **não um campo de índice do Word**: esse aparece vazio até
   alguém carregar em «atualizar», e um índice em branco é pior do que nenhum.
-  A captura do README mostra a primeira página **com gráfico**, não a capa.
 - **Seis tipos de gráfico** (decisão de 16/08/2026): `barras`,
   `barras_horizontais`, `linhas`, `area`, `circular`, `dispersao`.
 - **A dispersão não agrega nada**: cruza duas colunas de números, um ponto por
